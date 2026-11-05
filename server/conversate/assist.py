@@ -48,7 +48,9 @@ _CRITERIA = """대화를 듣는 사람에게 도움이 될 새 정보가 있으�
 - 인사, 잡담, 감탄, "잘 들려?" 같은 확인, 의견·감정 표현만 있을 때
 - 회의, 예산, 밥 같은 일상 단어 자체의 뜻
 - 받아쓰기가 너무 이상해서 무슨 말인지 알 수 없을 때
-- 바로 전에 보여준 주제와 같을 때"""
+- 바로 전에 보여준 주제와 같을 때
+- 웹 검색으로 답할 수 없는 것: 사용자의 현재 위치가 필요한 것("가장 가까운 ~", "근처 ~"),
+  대화 속 사람의 개인 사정, 이 안경 앱이나 기기의 설정 방법, 화면에 무엇이 보이는지"""
 
 TRIAGE_INSTRUCTIONS = f"""너는 스마트 안경을 쓴 사용자의 대화를 옆에서 듣는 보조다.
 아래 대화 받아쓰기(음성 인식이라 틀린 글자가 있을 수 있음)를 보고, 지금 화면에 정보를 띄울지만 판단한다.
@@ -74,7 +76,8 @@ ANSWER_INSTRUCTIONS = """너는 스마트 안경 화면에 짧은 정보를 띄�
 안경 화면이 아주 작다. 반드시 JSON 하나만 출력한다:
 {"title": "15자 이내 주제", "text": "한국어 80자 이내, 핵심 사실만 한두 문장"}
 링크, URL, 출처 표시, 괄호 속 사이트 이름은 절대 넣지 않는다.
-확실한 답을 찾지 못하면 {"skip": true}"""
+정확한 답이 없어도 질문과 관련해 쓸모 있는 일반 사실이 있으면 그것을 답한다.
+관련된 사실을 하나도 찾지 못했을 때만 {"skip": true}"""
 
 # One-step prompt (kept for ASSIST_TRIAGE=0).
 INSTRUCTIONS = f"""너는 스마트 안경을 쓴 사용자의 대화를 옆에서 돕는 보조다.
@@ -188,14 +191,17 @@ def _norm(text: str) -> str:
     return re.sub(r"[\W_]+", "", text or "").lower()
 
 
-def similar(a: str, b: str, threshold: float = 0.6) -> bool:
+def similar(a: str, b: str, threshold: float = 0.75) -> bool:
     """Same topic or answer, ignoring spaces and punctuation."""
     import difflib
 
     x, y = _norm(a), _norm(b)
     if not x or not y:
         return False
-    if x in y or y in x:
+    short, long_ = sorted((x, y), key=len)
+    # Containment only counts when the two are about the same length: "손가락인식" inside
+    # "근전도와손가락인식" is a different, new answer (it was wrongly dropped).
+    if short in long_ and len(short) >= 0.75 * len(long_):
         return True
     return difflib.SequenceMatcher(None, x, y).ratio() >= threshold
 

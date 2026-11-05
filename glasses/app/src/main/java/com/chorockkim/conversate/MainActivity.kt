@@ -260,6 +260,8 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
             State.WAITING_RETRY -> "연결 끊김 · $detail"
         }
         connected = state == State.READY
+        // A new connection is a new server session: an AI request from the old one is gone.
+        if (state == State.READY || state == State.WAITING_RETRY) assistBusy = false
         connectionAlert = (state == State.IDLE || state == State.WAITING_RETRY) && detail.isNotEmpty()
         render()
         // Check for a new version once per app launch, on the first connection to the server.

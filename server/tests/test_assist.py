@@ -270,6 +270,8 @@ def test_similar():
 
     assert similar("방탄소년단 데뷔일은?", "방탄소년단의 데뷔일은?")
     assert similar("방탄소년단 데뷔", "방탄소년단 데뷔일")
+    # a short title inside a longer, different one is not a repeat (was wrongly dropped)
+    assert not similar("손가락 인식", "근전도와 손가락 인식")
     assert not similar("방탄소년단 데뷔일은?", "CPC 뜻은?")
     assert not similar("", "아무거나")
 
