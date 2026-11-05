@@ -82,6 +82,9 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
                     onUpdateStatus(if (silent) "마이크 무음 ($name) · 다른 앱이 마이크를 쓰는 중일 수 있음" else "마이크: $name")
                 }
             },
+            onChannelLevels = { name, levels ->
+                main.post { client.sendText(Protocol.micLevels(name, levels)) }
+            },
         )
         updater =Updater(this, { settings.config }, { main.post(it) })
         updater.listener = this
