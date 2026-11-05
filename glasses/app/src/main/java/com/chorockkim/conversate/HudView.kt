@@ -25,7 +25,7 @@ import kotlin.math.abs
  * density > 1; other Rokid apps assume a 480x640 px screen.) No background and no outer border:
  * black is see-through on the waveguide.
  *
- *   baseline 27   ● 연결됨                                   듣는 중 ▂▃▅
+ *   baseline 27   ● 연결 끊김 (only when not connected)            듣는 중 ▂▃▅
  *   y 36..120     AI card (top ~30%): 70% wide, centred, bordered; "생각 중" while the AI works
  *   y 128..252    captions, newest at the bottom; only the newest line is bright, older ones faint
  *   baseline 272  hint                                 HH:mm  ⚡▭ 82%
@@ -171,9 +171,12 @@ class HudView(context: Context) : View(context) {
         val s = state
 
         // Top line: connection (left), mic (right).
-        small.color = if (s.connectionAlert) Color.WHITE else if (s.connected) green else dim
-        val conn = TextUtils.ellipsize("● ${s.connection}", small, W - 2 * MARGIN - 110f, TextUtils.TruncateAt.END)
-        canvas.drawText(conn, 0, conn.length, MARGIN, TOP_BASELINE, small)
+        // Connection only when there is a problem (connecting, lost); nothing while connected.
+        if (!s.connected) {
+            small.color = if (s.connectionAlert) Color.WHITE else dim
+            val conn = TextUtils.ellipsize("● ${s.connection}", small, W - 2 * MARGIN - 110f, TextUtils.TruncateAt.END)
+            canvas.drawText(conn, 0, conn.length, MARGIN, TOP_BASELINE, small)
+        }
         drawMic(canvas, s)
 
         drawAssist(canvas, s.assist, s.assistBusy)
@@ -380,7 +383,7 @@ class HudView(context: Context) : View(context) {
         const val LEVEL_STEPS = 5
         /** More than ever fit; the view cuts from the top. */
         const val MAX_LINES = 12
-        const val HINT = "탭 시작/정지 · 쓸기 지난 자막 · 두 번 탭 종료"
+        const val HINT = "쓸기 지난 자막 · 두 번 탭 종료"
 
         /** ~300 is quiet speech, ~3000+ is loud (int16 RMS, same scale as the server). */
         fun levelSteps(rms: Double): Int = when {

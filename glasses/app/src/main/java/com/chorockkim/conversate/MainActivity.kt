@@ -17,12 +17,12 @@ import android.widget.FrameLayout
 import com.chorockkim.conversate.ConversateClient.State
 
 /**
- * Single screen: tap starts/stops listening. While listening, mic audio streams to the server
- * and captions come back. The connection is kept open while the app is in the foreground.
+ * Single screen. Listening is always on while the app is in the foreground: mic audio streams
+ * to the server and captions come back. Leaving the app (pause) stops it.
  *
  * Input (touchpad, R08 ring with or without R08 Access Bridge):
- *   tap = start/stop, forward/back = newer/older captions, back (double tap) = back to live
- *   captions if scrolled, otherwise exit.
+ *   forward/back = newer/older captions, back (double tap) = back to live captions if scrolled,
+ *   otherwise exit. Tap does nothing.
  */
 class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     private val main = Handler(Looper.getMainLooper())
@@ -119,6 +119,7 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         // Sticky broadcast: delivers the current level at once, then every change.
         registerReceiver(batteryReceiver, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         connectIfConfigured()
+        startListening()
         // So R08 Access Bridge treats this view as the current focus from the first ring input.
         hud.requestFocus()
     }
@@ -143,7 +144,7 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     private fun setupNotice(): String {
         val config = settings.config
         return if (config.isComplete) {
-            "탭해서 듣기 시작\n서버 ${config.url}"
+            "말하면 자막이 나옵니다"
         } else {
             "서버 주소가 없습니다.\nadb로 설정하세요 (README 참고)"
         }
@@ -165,7 +166,7 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     /** All inputs (touchpad keys, R08 ring via the bridge or media keys, swipes) end up here. */
     private fun handle(action: GlassesInput.Action) {
         when (action) {
-            GlassesInput.Action.SELECT -> toggleListening()
+            GlassesInput.Action.SELECT -> return // listening is always on
             GlassesInput.Action.PREVIOUS -> captions.scrollOlder()
             GlassesInput.Action.NEXT -> captions.scrollNewer()
             GlassesInput.Action.BACK -> if (captions.scrollBack > 0) captions.backToLive() else finish()
@@ -177,10 +178,6 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     // endregion
 
     // region Listening
-
-    private fun toggleListening() {
-        if (mic.isRunning) stopListening() else startListening()
-    }
 
     private fun startListening() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -200,8 +197,6 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         level = 0.0
         notice = setupNotice()
         render()
-        // An update found while listening waits until now, so a conversation is never cut off.
-        if (updater.available != null) updater.install()
     }
 
     override fun onRequestPermissionsResult(code: Int, permissions: Array<out String>, results: IntArray) {
@@ -240,11 +235,12 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
 
     // endregion
 
-    // region Update (no taps: installs by itself while not listening)
+    // region Update (no taps: checked once at launch, installed right away)
 
     override fun onUpdateAvailable(available: Updater.Latest?) {
         render()
-        if (available != null && !mic.isRunning) updater.install()
+        // Found right after launch, before any real conversation: install now (the app restarts).
+        if (available != null) updater.install()
     }
 
     override fun onUpdateStatus(message: String) {

@@ -81,9 +81,9 @@ class HudViewSnapshotTest {
         "06_no_assist",
     )
 
-    @Test fun stopped() = paparazzi.snapshot(
-        hud(HudView.State(connection = "연결됨", connected = true, notice = "탭해서 듣기 시작\n서버 ws://172.20.10.2:8000/ws", battery = 12)),
-        "03_stopped",
+    @Test fun waitingForSpeech() = paparazzi.snapshot(
+        hud(HudView.State(connection = "연결됨", connected = true, listening = true, level = 20.0, notice = "말하면 자막이 나옵니다", battery = 12)),
+        "03_waiting_for_speech",
     )
 
     @Test fun notConfigured() = paparazzi.snapshot(

@@ -21,9 +21,9 @@ iPhone 은 개인용 핫스팟으로 인터넷만 준다 (폰 앱 없음)
 |---|---|---|
 | ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewSnapshotTest_listening_01_listening.png) | ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewSnapshotTest_longConversationCutsFromTop_02_long.png) | ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewFullScreenSnapshotTest_onGlassesScreen_00_full_screen.png) |
 
-| AI 생각 중 (충전 중) | 정지 (배터리 부족) | 서버 설정 전 | 연결 끊김 + 지난 자막 보는 중 |
+| AI 생각 중 (충전 중) | 말 기다리는 중 (배터리 부족) | 서버 설정 전 | 연결 끊김 + 지난 자막 보는 중 |
 |---|---|---|---|
-| ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewSnapshotTest_aiThinking_07_ai_thinking.png) | ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewSnapshotTest_stopped_03_stopped.png) | ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewSnapshotTest_notConfigured_04_not_configured.png) | ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewSnapshotTest_reconnectingWhileScrolledBack_05_reconnecting_scrolled.png) |
+| ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewSnapshotTest_aiThinking_07_ai_thinking.png) | ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewSnapshotTest_waitingForSpeech_03_waiting_for_speech.png) | ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewSnapshotTest_notConfigured_04_not_configured.png) | ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewSnapshotTest_reconnectingWhileScrolledBack_05_reconnecting_scrolled.png) |
 
 [Paparazzi](https://github.com/cashapp/paparazzi) 가 실제 그리기 코드로 그린 것 (`./gradlew :app:recordPaparazziDebug`).
 
@@ -37,7 +37,7 @@ iPhone 은 개인용 핫스팟으로 인터넷만 준다 (폰 앱 없음)
 
 | 입력 | 동작 |
 |---|---|
-| 탭 (터치패드 ENTER, R08 링 탭) | 듣기 시작 / 정지 |
+| (없음) | 앱을 켜면 바로 듣기 시작, 앱을 나가면 멈춤. 탭은 쓰지 않음 |
 | 뒤로 쓸기 (DPAD 왼쪽·위, R08 링 뒤로) | 지난 자막 |
 | 앞으로 쓸기 (DPAD 오른쪽·아래, R08 링 앞으로) | 최신 쪽으로 |
 | 뒤로 (더블탭, R08 링 더블탭) | 지난 자막을 보던 중이면 최신으로, 아니면 앱 종료 |
@@ -92,7 +92,7 @@ export OTA_UPLOAD_TOKEN=...   # Railway 변수 OTA_UPLOAD_TOKEN
 scripts/release.sh 2 0.2.0 --upload   # versionCode 는 매번 올린다
 ```
 - 안경은 **앱을 켤 때 한 번** (켠 뒤 서버에 처음 연결됐을 때) `/app/latest` 를 확인한다. 새 버전이면 받아서 sha256 을 확인하고 **확인 창 없이 설치**한 뒤 앱을 다시 띄운다 (Android 12 의 `USER_ACTION_NOT_REQUIRED`, 자기 자신 업데이트만 가능).
-- 듣는 중이면 끊지 않고, 정지했을 때 설치한다. 진행 상황은 아래 줄에, 받을 버전은 오른쪽 아래 `새 버전 0.2.0`.
+- 확인은 앱을 켤 때라, 새 버전이 있으면 바로 설치하고 다시 켠다. 진행 상황은 아래 줄에, 받을 버전은 오른쪽 아래 `새 버전 0.2.0`.
 - 위의 `-i` 설치나 `appops` 가 빠졌으면 안드로이드가 설치 확인 창을 띄운다 (그때는 한 번 눌러야 함).
 - 서버 쪽: `PUT /app/upload` (업로드 토큰), `GET /app/latest`·`/app/download` (안경 토큰). APK 는 Railway 볼륨 `/data/ota` 에 하나만 보관.
 - **릴리스 키를 잃어버리면 OTA 로는 더 이상 업데이트할 수 없다** (지우고 케이블로 다시 설치).
