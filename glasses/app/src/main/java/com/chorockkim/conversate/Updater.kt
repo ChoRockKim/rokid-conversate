@@ -83,9 +83,13 @@ class Updater(
         val latest = available ?: return
         if (busy) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
-            post {
-                listener?.onUpdateStatus(
-                    "업데이트 ${latest.versionName}: 설치 권한 없음 (adb shell appops set ${context.packageName} REQUEST_INSTALL_PACKAGES allow)"
+            // Not granted over adb: open the "install unknown apps" switch for this app once.
+            // After allowing it, the next app start installs the update.
+            post { listener?.onUpdateStatus("업데이트 ${latest.versionName}: '이 출처 허용'을 켜고 앱을 다시 켜세요") }
+            runCatching {
+                context.startActivity(
+                    Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, android.net.Uri.parse("package:${context.packageName}"))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 )
             }
             return
