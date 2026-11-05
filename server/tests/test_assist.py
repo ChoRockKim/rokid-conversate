@@ -430,3 +430,26 @@ def test_suggestion_is_shown_directly_and_rationed():
         assert a.answered == []  # no answer/search call for suggestions
 
     run(main())
+
+
+def test_instant_conversion_and_llm_does_not_repeat_it():
+    from conversate.assist import Pick
+    from conversate.convert import Conversion
+
+    async def main():
+        sent = []
+
+        async def send(a):
+            sent.append(a.text)
+
+        def converter(text):
+            return [Conversion("110달러", "110달러 환산", "110달러 ≈ 14만 7,500원 (1달러 1,341원)")] if "110달러" in text else []
+
+        a = Picker([Pick(topic="110달러는 원화로?", kind="conversion", quote="운동화 110달러였어")])
+        eng = AssistEngine(a, send, AssistConfig(min_interval_s=0, min_new_chars=1), converter=converter)
+        eng.on_final("어제 산 운동화 110달러였어")
+        await asyncio.sleep(0.05)
+        assert sent == ["110달러 ≈ 14만 7,500원 (1달러 1,341원)"]
+        assert a.answered == []  # the LLM's own conversion was skipped as already shown
+
+    run(main())

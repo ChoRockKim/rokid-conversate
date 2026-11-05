@@ -77,7 +77,8 @@ TRIAGE_INSTRUCTIONS = f"""너는 스마트 안경을 쓴 사용자의 대화를 
 건너뛸 때: {{"skip": true}}"""
 
 ANSWER_INSTRUCTIONS = """너는 스마트 안경 화면에 짧은 정보를 띄우는 보조다.
-주어진 질문에 정확히 답한다. 환율·가격·최신 사실은 웹 검색으로 확인한다.
+주어진 질문에 정확히 답한다. 빠른 답이 중요하다: 이미 확실히 아는 일반 지식(역사, 정의, 과학 등)은
+검색하지 않고 바로 답하고, 가격·환율·일정·최근 소식처럼 바뀌는 정보만 웹 검색한다.
 사전 노트가 있으면 먼저 참고하고, 노트에 답이 있으면 노트 내용을 쓴다 (노트가 웹보다 우선).
 질문 끝의 (상황)과 대화 흐름을 보고, 이 대화를 하는 사람에게 지금 가장 쓸모 있는 각도로 답한다.
 예: 산 물건 가격이 비싸다는 이야기라면 원화 환산에 국내 가격과의 비교를 붙이고,
@@ -155,6 +156,9 @@ class OpenAIAssistant:
         # No SDK retries: a late answer is useless on the glasses, and retrying a rate-limited
         # request only holds up the next one. AssistEngine backs off instead.
         self.client = OpenAI(timeout=30.0, max_retries=0)
+        # Speed: little hidden reasoning for these short jobs (ASSIST_REASONING=none|low|medium|"").
+        self.reasoning_effort = os.environ.get("ASSIST_REASONING", "low")
+        self._no_reasoning: set[str] = set()
 
     def _conversation(self, transcript: list[str], shown: list[str]) -> str:
         prompt = ""
@@ -167,10 +171,11 @@ class OpenAIAssistant:
         return prompt
 
     def _call(self, step: str, model: str, instructions: str, prompt: str, search: bool) -> str:
-        from openai import RateLimitError
+        from openai import BadRequestError, RateLimitError
 
         try:
-            raw = self.client.responses.with_raw_response.create(
+            started = time.monotonic()
+            kwargs = dict(
                 model=model,
                 instructions=instructions,
                 input=prompt,
@@ -178,6 +183,18 @@ class OpenAIAssistant:
                         "user_location": {"type": "approximate", "country": "KR"}}]
                 if search else [],
             )
+            if self.reasoning_effort and model not in self._no_reasoning:
+                kwargs["reasoning"] = {"effort": self.reasoning_effort}
+            try:
+                raw = self.client.responses.with_raw_response.create(**kwargs)
+            except BadRequestError as e:
+                if "reasoning" not in kwargs or "reason" not in str(e).lower():
+                    raise
+                # This model takes no reasoning setting: remember and call it plainly.
+                log.info("assist: %s rejects reasoning effort, calling without it", model)
+                self._no_reasoning.add(model)
+                kwargs.pop("reasoning")
+                raw = self.client.responses.with_raw_response.create(**kwargs)
         except RateLimitError as e:
             raise RateLimited(retry_after_seconds(str(e), e.response.headers.get("retry-after"))) from e
         response = raw.parse()
@@ -185,8 +202,8 @@ class OpenAIAssistant:
         text = response.output_text or ""
         # Rate-limit headers show the account's real per-minute limit (it rises with the tier).
         log.info(
-            "assist %s: %s tokens in/out %s/%s, TPM limit %s remaining %s, reply %r",
-            step, model,
+            "assist %s: %s %.1fs, tokens in/out %s/%s, TPM limit %s remaining %s, reply %r",
+            step, model, time.monotonic() - started,
             getattr(usage, "input_tokens", "?"), getattr(usage, "output_tokens", "?"),
             raw.headers.get("x-ratelimit-limit-tokens"), raw.headers.get("x-ratelimit-remaining-tokens"),
             text[:120],
@@ -394,11 +411,15 @@ class AssistEngine:
         config: AssistConfig | None = None,
         clock: Callable[[], float] = time.monotonic,
         on_busy: Callable[[bool], Awaitable[None]] | None = None,
+        converter: Callable[[str], list] | None = None,
     ) -> None:
         self.assistant = assistant
         self.send = send
         # Told when a request to the LLM starts (True) and ends (False), for a "thinking" hint.
         self.on_busy = on_busy
+        # Instant conversions (convert.py): money/units shown at once, without the LLM.
+        self.converter = converter
+        self.converted: deque[str] = deque(maxlen=10)
         self.config = config or AssistConfig()
         self.clock = clock
         self.lines: deque[str] = deque(maxlen=self.config.context_lines)
@@ -426,6 +447,8 @@ class AssistEngine:
             return  # context only
         self.new_lines.append(text)
         self.new_chars += len(text)
+        if self.converter is not None:
+            asyncio.create_task(self._convert(text))
         if looks_like_question(text):
             self.question = True
         self._maybe_ask()
@@ -509,9 +532,27 @@ class AssistEngine:
         self.task = None
         self._maybe_ask()
 
+    async def _convert(self, text: str) -> None:
+        try:
+            found = await asyncio.to_thread(self.converter, text)
+        except Exception:
+            log.exception("conversion failed")
+            return
+        for conv in found:
+            if self._seen(conv.text) or any(similar(conv.span, s) for s in self.converted):
+                continue
+            self.converted.append(conv.span)
+            self.recent.extend([conv.title, conv.text])
+            self.shown.append(conv.title)
+            log.info("assist: instant conversion %s", conv.text)
+            await self.send(Assist(conv.title, conv.text))
+
     def _vet(self, pick: "Pick | None", new_lines: list[str]) -> "Pick | None":
         """Checks on what triage picked, before anything shows on screen."""
         if pick is None:
+            return None
+        if pick.kind == "conversion" and pick.quote and any(_norm(s) in _norm(pick.quote) for s in self.converted):
+            log.info("assist: conversion %r already shown instantly, skipped", pick.topic)
             return None
         if pick.quote is not None and not quote_heard(pick.quote, new_lines):
             log.info("assist: quote %r not in what was just heard, skipped (%s)", pick.quote, pick.topic)

@@ -30,6 +30,8 @@ import numpy as np
 from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
 
 from .assist import Assist, AssistEngine, Assistant, assistant_from_env
+from .convert import Rates
+from .convert import find as find_conversions
 from .history import ConversationLog, history_from_env, history_router
 from .notes import notes_router, notes_store_from_env
 from .ota import ota_router_from_env
@@ -74,6 +76,9 @@ def create_app(
 
     app = FastAPI(title="rokid-conversate", lifespan=lifespan)
     stt = transcriber or transcriber_from_env()
+    # Instant money/unit conversions (CONVERT=0 turns them off); one rate cache per server.
+    rates = Rates()
+    converter = None if os.environ.get("CONVERT", "1") == "0" else (lambda text: find_conversions(text, rates))
     ai = assistant_from_env(notes.text) if assistant is _FROM_ENV else assistant
     tr = translator_from_env() if translator is _FROM_ENV else translator
     if live_factory is _FROM_ENV:
@@ -100,7 +105,7 @@ def create_app(
             return
         await websocket.accept()
         log.info("glasses connected from %s", websocket.client)
-        await Session(websocket, stt, ai, segmenter_config, tr, live_factory, hist).run()
+        await Session(websocket, stt, ai, segmenter_config, tr, live_factory, hist, converter).run()
         log.info("glasses disconnected")
 
     return app
@@ -124,6 +129,7 @@ class Session:
         translator: Translator | None = None,
         live_factory: Callable[..., LiveTranslator] | None = None,
         history: ConversationLog | None = None,
+        converter: Callable[[str], list] | None = None,
     ) -> None:
         self.history = history
         self.ws = websocket
@@ -135,7 +141,8 @@ class Session:
         self.live_until = 0.0
         self.live_id = LIVE_ID_BASE
         self.assist = (
-            AssistEngine(ai, self._send_assist, on_busy=self._send_assist_busy) if ai is not None else None
+            AssistEngine(ai, self._send_assist, on_busy=self._send_assist_busy, converter=converter)
+            if ai is not None else None
         )
         self.segmenter = Segmenter(segmenter_config)
         self.finals: deque[Event] = deque()
