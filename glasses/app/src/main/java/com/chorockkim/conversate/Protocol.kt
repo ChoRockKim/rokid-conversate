@@ -31,7 +31,13 @@ object Protocol {
     sealed interface ServerMessage {
         data object Ready : ServerMessage
         data class Level(val rms: Double, val speech: Boolean, val receivedMs: Long) : ServerMessage
-        data class Caption(val id: Int, val text: String, val final: Boolean) : ServerMessage
+        /** [translation]: Korean translation when the speech was in another language. */
+        data class Caption(
+            val id: Int,
+            val text: String,
+            val final: Boolean,
+            val translation: String? = null,
+        ) : ServerMessage
         data class Error(val message: String) : ServerMessage
         /** AI result for the top panel (search answer, summary, ...). Empty text clears it. */
         data class Assist(val title: String, val text: String) : ServerMessage
@@ -48,7 +54,8 @@ object Protocol {
                 o.optDouble("rms", 0.0), o.optBoolean("speech"), o.optLong("received_ms")
             )
             "caption" -> ServerMessage.Caption(
-                o.getInt("id"), o.optString("text"), o.optBoolean("final")
+                o.getInt("id"), o.optString("text"), o.optBoolean("final"),
+                o.optString("translation").takeIf { it.isNotBlank() },
             )
             "error" -> ServerMessage.Error(o.optString("message"))
             "assist" -> ServerMessage.Assist(o.optString("title"), o.optString("text"))

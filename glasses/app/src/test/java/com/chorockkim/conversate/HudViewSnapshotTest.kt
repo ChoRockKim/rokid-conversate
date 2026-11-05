@@ -76,6 +76,20 @@ class HudViewSnapshotTest {
         "08_ai_thinking_with_result",
     )
 
+    @Test fun foreignSpeechWithTranslation() = paparazzi.snapshot(
+        hud(
+            HudView.State(
+                listening = true, connected = true, level = 900.0, battery = 70,
+                lines = listOf(
+                    Line(1, "첫 번째 안건은 광고 채널 정리입니다.", true),
+                    Line(2, "Where is the nearest subway station?", true, isOriginal = true),
+                    Line(2, "가장 가까운 지하철역이 어디예요?", true, isTranslation = true),
+                ),
+            )
+        ),
+        "09_translation",
+    )
+
     @Test fun noAssistYet() = paparazzi.snapshot(
         hud(HudView.State(connection = "연결됨", connected = true, listening = true, level = 1200.0, lines = MEETING)),
         "06_no_assist",

@@ -6,7 +6,17 @@ package com.chorockkim.conversate
  * for that id arrives.
  */
 class Captions(private val maxFinals: Int = 50) {
-    data class Line(val id: Int, val text: String, val final: Boolean)
+    /** [translation]: Korean translation of a foreign-language utterance, shown below it. */
+    data class Line(
+        val id: Int,
+        val text: String,
+        val final: Boolean,
+        val translation: String? = null,
+        /** A display row holding translated text (drawn bright). */
+        val isTranslation: Boolean = false,
+        /** A display row of foreign original text that has a translation (drawn faint). */
+        val isOriginal: Boolean = false,
+    )
 
     private val finals = ArrayDeque<Line>()
     private var partial: Line? = null
@@ -18,8 +28,14 @@ class Captions(private val maxFinals: Int = 50) {
     fun apply(caption: Protocol.ServerMessage.Caption) {
         if (caption.final) {
             if (partial?.id == caption.id) partial = null
+            // The same id again = the translation for a caption already shown: update in place.
+            val index = finals.indexOfLast { it.id == caption.id }
+            if (index >= 0) {
+                finals[index] = finals[index].copy(translation = caption.translation ?: finals[index].translation)
+                return
+            }
             if (caption.text.isNotBlank()) {
-                finals.addLast(Line(caption.id, caption.text.trim(), true))
+                finals.addLast(Line(caption.id, caption.text.trim(), true, caption.translation))
                 while (finals.size > maxFinals) finals.removeFirst()
                 // Keep the reader's place when scrolled back.
                 if (scrollBack > 0) scrollBack = (scrollBack + 1).coerceAtMost(finals.size - 1)
@@ -44,7 +60,11 @@ class Captions(private val maxFinals: Int = 50) {
         } else {
             finals.toList().takeLast(count) + listOfNotNull(partial)
         }
-        return source.flatMap { line -> chunk(line.text).map { Line(line.id, it, line.final) } }.takeLast(count)
+        // Original, then its translation on the next row(s): "Where is it?" / "어디예요?"
+        return source.flatMap { line ->
+            chunk(line.text).map { Line(line.id, it, line.final, isOriginal = line.translation != null) } +
+                (line.translation?.let { t -> chunk(t).map { Line(line.id, it, line.final, isTranslation = true) } } ?: emptyList())
+        }.takeLast(count)
     }
 
     companion object {

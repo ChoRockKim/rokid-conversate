@@ -22,12 +22,13 @@ class FakeTranscriber:
 AUTH = {"Authorization": "Bearer secret"}
 
 
-def client(stt=None, assistant=None):
+def client(stt=None, assistant=None, translator=None):
     return TestClient(
         create_app(
             transcriber=stt or FakeTranscriber(), token="secret", assistant=assistant,
             # synthetic tones: energy detector (WebRTC VAD is checked with real speech separately)
             segmenter_config=SegmenterConfig(use_webrtc=False),
+            translator=translator,
         )
     )
 
@@ -138,3 +139,24 @@ def test_mic_diagnostics_are_accepted_quietly():
         ws.send_text(json.dumps({"type": "mic", "source": "MIC", "silent": False}))
         ws.send_text(json.dumps({"type": "hello"}))
         assert json.loads(ws.receive_text()) == {"type": "ready"}  # no error in between
+
+
+def test_foreign_speech_gets_a_translation():
+    class English:
+        def transcribe(self, audio, *, partial):
+            return "Where is the station?"
+
+    class Ko:
+        def translate(self, text):
+            return "역이 어디예요?"
+
+    with client(stt=English(), translator=Ko()).websocket_connect("/ws", headers=AUTH) as ws:
+        ws.send_text(json.dumps({"type": "hello"}))
+        ws.receive_text()
+        ws.send_bytes(silence(500) + tone(800))
+        ws.send_text(json.dumps({"type": "stop"}))
+        first = read_until(ws, lambda m: m["type"] == "caption" and m["final"])
+        assert first["text"] == "Where is the station?" and "translation" not in first
+        second = read_until(ws, lambda m: m["type"] == "caption" and "translation" in m)
+        assert second["id"] == first["id"]
+        assert second["translation"] == "역이 어디예요?"

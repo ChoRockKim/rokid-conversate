@@ -134,6 +134,9 @@ class HudView(context: Context) : View(context) {
     private val faint = Color.parseColor("#2f7a4a")
     private val latest = paint(CAPTION_SIZE, green)
     private val older = paint(CAPTION_SIZE, faint)
+    private val translationLatest = paint(CAPTION_SIZE, Color.WHITE)
+    private val translationOlder = paint(CAPTION_SIZE, Color.parseColor("#8f8f8f"))
+    private val originalPaint = paint(CAPTION_SIZE, Color.parseColor("#5f5f5f"))
     private val noticePaint = paint(CAPTION_SIZE, dim)
     private val updatePaint = paint(12f, green)
     private val assistTitle = paint(13f, green, bold = true)
@@ -187,7 +190,14 @@ class HudView(context: Context) : View(context) {
         } else {
             var bottom = CAPTION_BOTTOM
             for ((i, line) in s.lines.asReversed().withIndex()) {
-                val layout = layoutOf(line.text, if (i == 0) latest else older)
+                // Foreign speech: original faint grey, the Korean translation below it bright.
+                val paint = when {
+                    line.isOriginal -> originalPaint
+                    line.isTranslation -> if (i <= 1) translationLatest else translationOlder
+                    i == 0 -> latest
+                    else -> older
+                }
+                val layout = layoutOf(line.text, paint)
                 if (bottom - layout.height < CAPTION_TOP) {
                     // Oldest visible line: keep its last rows, cut the top.
                     canvas.save()

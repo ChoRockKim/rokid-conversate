@@ -94,21 +94,24 @@ def to_wav(audio: np.ndarray, sample_rate: int = 16_000) -> bytes:
 class OpenAITranscriber:
     """OpenAI speech-to-text (default gpt-transcribe, $0.0045/min) for finished utterances.
 
-    Environment: OPENAI_API_KEY, STT_MODEL (default gpt-transcribe), WHISPER_LANGUAGE (ko).
+    Environment: OPENAI_API_KEY, STT_MODEL (default gpt-transcribe), STT_LANGUAGES (ko,en,ja,zh).
     """
 
     def __init__(self) -> None:
         from openai import OpenAI
 
         self.model = os.environ.get("STT_MODEL", "gpt-transcribe")
-        self.language = os.environ.get("WHISPER_LANGUAGE", "ko") or None
+        # Expected languages: Korean first, plus what a foreign speaker is likely to use, so
+        # foreign speech is written in its own language (and then translated) instead of being
+        # forced into Korean. STT_LANGUAGES="" lets the model detect freely.
+        self.languages = [x for x in os.environ.get("STT_LANGUAGES", "ko,en,ja,zh").split(",") if x.strip()]
         self.client = OpenAI(timeout=20.0, max_retries=1)
 
     def transcribe(self, audio: np.ndarray, *, partial: bool) -> str:
         extra = {}
-        if self.language:
+        if self.languages:
             # gpt-transcribe takes a list ("languages"); older models a single "language".
-            extra = {"languages": [self.language]} if self.model == "gpt-transcribe" else {"language": self.language}
+            extra = {"languages": self.languages} if self.model == "gpt-transcribe" else {"language": self.languages[0]}
         result = self.client.audio.transcriptions.create(
             model=self.model,
             file=("utterance.wav", to_wav(normalize(audio)), "audio/wav"),

@@ -94,4 +94,15 @@ class CaptionsTest {
         assertEquals(listOf(true, false, false), lines.map { it.final })
         assertEquals(listOf("오늘 회의는 여기까지입니다."), c.visible(1).map { it.text })
     }
+
+    @Test fun translationArrivesLaterAndShowsBelow() {
+        val c = Captions()
+        c.apply(Caption(1, "Where is the station?", true))
+        assertEquals(listOf("Where is the station?"), c.visible(10).map { it.text })
+        c.apply(Caption(1, "Where is the station?", true, translation = "역이 어디예요?"))
+        val lines = c.visible(10)
+        assertEquals(listOf("Where is the station?", "역이 어디예요?"), lines.map { it.text })
+        assertEquals(listOf(false, true), lines.map { it.isTranslation })
+        assertEquals(listOf(true, false), lines.map { it.isOriginal })
+    }
 }

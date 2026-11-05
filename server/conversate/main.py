@@ -7,6 +7,7 @@ Protocol (see docs/protocol.md):
   server -> glasses  {"type":"ready"}
                      {"type":"level","rms":123.4,"speech":false,"received_ms":5000}
                      {"type":"caption","id":3,"text":"...","final":false}
+                     {"type":"caption","id":3,"text":"Hello","final":true,"translation":"안녕하세요"}  (foreign speech)
                      {"type":"assist","title":"...","text":"..."}   AI panel (needs OPENAI_API_KEY)
                      {"type":"assist_status","busy":true}            AI request running / done
                      {"type":"error","message":"..."}
@@ -30,6 +31,7 @@ from .assist import Assist, AssistEngine, Assistant, assistant_from_env
 from .ota import ota_router_from_env
 from .segmenter import SAMPLE_RATE, Event, Segmenter, SegmenterConfig
 from .transcriber import Transcriber, transcriber_from_env
+from .translate import Translator, needs_translation, translator_from_env
 
 log = logging.getLogger("conversate")
 
@@ -46,10 +48,12 @@ def create_app(
     assistant: Assistant | None | object = _FROM_ENV,
     ota: APIRouter | None = None,
     segmenter_config: SegmenterConfig | None = None,
+    translator: Translator | None | object = _FROM_ENV,
 ) -> FastAPI:
     app = FastAPI(title="rokid-conversate")
     stt = transcriber or transcriber_from_env()
     ai = assistant_from_env() if assistant is _FROM_ENV else assistant
+    tr = translator_from_env() if translator is _FROM_ENV else translator
     local = getattr(stt, "local", stt)
     if os.environ.get("WHISPER_PRELOAD") == "1" and hasattr(local, "_get_model"):
         # Load the model in the background at startup, not on the first caption.
@@ -68,7 +72,7 @@ def create_app(
             return
         await websocket.accept()
         log.info("glasses connected from %s", websocket.client)
-        await Session(websocket, stt, ai, segmenter_config).run()
+        await Session(websocket, stt, ai, segmenter_config, tr).run()
         log.info("glasses disconnected")
 
     return app
@@ -89,9 +93,11 @@ class Session:
         stt: Transcriber,
         ai: Assistant | None = None,
         segmenter_config: SegmenterConfig | None = None,
+        translator: Translator | None = None,
     ) -> None:
         self.ws = websocket
         self.stt = stt
+        self.translator = translator
         self.assist = (
             AssistEngine(ai, self._send_assist, on_busy=self._send_assist_busy) if ai is not None else None
         )
@@ -236,8 +242,22 @@ class Session:
                     await self.send(
                         {"type": "caption", "id": event.segment_id, "text": text, "final": final}
                     )
+                if final and text and self.translator is not None and needs_translation(text):
+                    asyncio.create_task(self._translate(event.segment_id, text))
                 if final and text and self.assist is not None:
                     self.assist.on_final(text)
+
+    async def _translate(self, segment_id: int, text: str) -> None:
+        """Foreign speech: send the same caption again with a Korean "translation" field."""
+        try:
+            korean = await asyncio.to_thread(self.translator.translate, text)
+        except Exception:
+            log.exception("translation failed")
+            return
+        if korean:
+            await self.send(
+                {"type": "caption", "id": segment_id, "text": text, "final": True, "translation": korean}
+            )
 
 
 def app() -> FastAPI:

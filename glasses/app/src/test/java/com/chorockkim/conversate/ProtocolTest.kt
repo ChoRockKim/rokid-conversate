@@ -29,6 +29,10 @@ class ProtocolTest {
             ServerMessage.Assist("요약", "내용"),
             Protocol.parse("""{"type":"assist","title":"요약","text":"내용"}""")
         )
+        assertEquals(
+            ServerMessage.Caption(2, "Hello", true, "안녕하세요"),
+            Protocol.parse("""{"type":"caption","id":2,"text":"Hello","final":true,"translation":"안녕하세요"}""")
+        )
         assertEquals(ServerMessage.AssistStatus(true), Protocol.parse("""{"type":"assist_status","busy":true}"""))
         assertEquals(ServerMessage.Error("boom"), Protocol.parse("""{"type":"error","message":"boom"}"""))
     }
