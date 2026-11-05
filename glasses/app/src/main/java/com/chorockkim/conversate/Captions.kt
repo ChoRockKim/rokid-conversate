@@ -72,23 +72,42 @@ class Captions(private val maxFinals: Int = 50) {
         const val CHUNK_CHARS = 32
 
         /**
-         * Splits [text] into pieces of at most [max] characters: first after sentence ends and
-         * commas, then at spaces; a single word longer than [max] is cut as is.
+         * Display width of [text] in "Korean characters": Hangul, CJK and kana count 1, Latin
+         * letters, digits, spaces and punctuation about half (they are narrower in the HUD font).
+         */
+        fun width(text: String): Double = text.sumOf { c ->
+            when (Character.UnicodeScript.of(c.code)) {
+                Character.UnicodeScript.HANGUL, Character.UnicodeScript.HAN,
+                Character.UnicodeScript.HIRAGANA, Character.UnicodeScript.KATAKANA -> 1.0
+                else -> 0.55
+            }
+        }
+
+        /**
+         * Splits [text] into rows of at most [max] width ([width]): first after sentence ends
+         * (not at commas, so one sentence stays together when it fits), then at spaces; a word
+         * wider than a row is cut as is.
          */
         fun chunk(text: String, max: Int = CHUNK_CHARS): List<String> {
-            val clauses = text.trim().split(Regex("(?<=[.?!。？！,，])\\s+")).filter { it.isNotBlank() }
+            val limit = max.toDouble()
+            val sentences = text.trim().split(Regex("(?<=[.?!。？！])\\s+")).filter { it.isNotBlank() }
             val out = mutableListOf<String>()
-            for (clause in clauses) {
+            for (sentence in sentences) {
                 var current = ""
-                for (word in clause.split(Regex("\\s+")).filter { it.isNotEmpty() }) {
+                for (word in sentence.split(Regex("\\s+")).filter { it.isNotEmpty() }) {
                     val candidate = if (current.isEmpty()) word else "$current $word"
                     when {
-                        candidate.length <= max -> current = candidate
-                        current.isNotEmpty() && word.length <= max -> { out += current; current = word }
+                        width(candidate) <= limit -> current = candidate
+                        current.isNotEmpty() && width(word) <= limit -> { out += current; current = word }
                         else -> {
-                            // A word longer than a row: hard-cut it.
+                            // A word wider than a row: hard-cut it.
                             var rest = candidate
-                            while (rest.length > max) { out += rest.take(max); rest = rest.drop(max).trimStart() }
+                            while (width(rest) > limit) {
+                                var n = 0
+                                while (n < rest.length && width(rest.take(n + 1)) <= limit) n++
+                                out += rest.take(n.coerceAtLeast(1))
+                                rest = rest.drop(n.coerceAtLeast(1)).trimStart()
+                            }
                             current = rest
                         }
                     }

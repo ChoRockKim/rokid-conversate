@@ -70,19 +70,20 @@ class CaptionsTest {
         val text = "안녕하세요. 오늘 회의에서는 다음 분기 마케팅 예산을 논의하겠습니다. 첫 번째 안건은 광고 채널 정리입니다."
         val pieces = Captions.chunk(text)
         assertEquals(listOf("안녕하세요.", "오늘 회의에서는 다음 분기 마케팅 예산을 논의하겠습니다.", "첫 번째 안건은 광고 채널 정리입니다."), pieces)
-        assertTrue(pieces.all { it.length <= Captions.CHUNK_CHARS })
+        assertTrue(pieces.all { Captions.width(it) <= Captions.CHUNK_CHARS })
     }
 
     @Test fun noPunctuationSplitsAtSpaces() {
         val text = "그래서 이번 분기에는 검색 광고를 줄이고 영상 광고 비중을 늘리는 쪽으로 제안드립니다 그리고 다음 달부터"
         val pieces = Captions.chunk(text, max = 20)
         assertTrue(pieces.size >= 3)
-        assertTrue(pieces.all { it.length <= 20 })
+        assertTrue(pieces.all { Captions.width(it) <= 20 })
         assertEquals(text, pieces.joinToString(" "))
     }
 
     @Test fun overlongWordIsCut() {
-        assertEquals(listOf("abcde", "fghij", "k"), Captions.chunk("abcdefghijk", max = 5))
+        // Latin letters count ~half: 9 fit in a width of 5
+        assertEquals(listOf("abcdefghi", "jk"), Captions.chunk("abcdefghijk", max = 5))
     }
 
     @Test fun visibleCountsPiecesAndMarksOnlyNewestPartial() {
@@ -104,5 +105,14 @@ class CaptionsTest {
         assertEquals(listOf("Where is the station?", "역이 어디예요?"), lines.map { it.text })
         assertEquals(listOf(false, true), lines.map { it.isTranslation })
         assertEquals(listOf(true, false), lines.map { it.isOriginal })
+    }
+
+    @Test fun englishSentenceStaysOnOneRow() {
+        assertEquals(
+            listOf("Excuse me, where is the nearest subway station?"),
+            Captions.chunk("Excuse me, where is the nearest subway station?"),
+        )
+        // a comma no longer splits a Korean sentence that fits
+        assertEquals(listOf("실례합니다, 가장 가까운 지하철역이 어디인가요?"), Captions.chunk("실례합니다, 가장 가까운 지하철역이 어디인가요?"))
     }
 }
