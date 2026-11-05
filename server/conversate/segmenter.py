@@ -27,7 +27,7 @@ FRAME_SAMPLES = SAMPLE_RATE * FRAME_MS // 1000  # 480 samples
 class SegmenterConfig:
     # WebRTC VAD decides what is speech (aggressiveness 0..3, higher = stricter) ...
     use_webrtc: bool = True
-    vad_mode: int = 2
+    vad_mode: int = 1  # 2 dropped a quiet first word ("안녕하세요") at glasses levels
     # ... as long as the frame is at least this loud (int16 RMS), so hiss stays silence.
     webrtc_min_rms: float = 30.0
     # Energy mode (use_webrtc=False): RMS this many times above the noise floor ...
