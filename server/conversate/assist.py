@@ -25,6 +25,8 @@ log = logging.getLogger(__name__)
 class Assist:
     title: str
     text: str
+    # Wikipedia article whose picture helps (a person, place, animal, dish, product), or None.
+    image: str | None = None
 
 
 class Assistant(Protocol):
@@ -89,7 +91,9 @@ ANSWER_INSTRUCTIONS = """너는 스마트 안경 화면에 짧은 정보를 띄�
 인사, 되묻기, 제안("~해 보세요"), 공감("궁금하시군요"), 감탄, 대화 내용 요약은 쓰지 않는다.
 문장은 "~이다" 또는 "~입니다"로 끝낸다.
 안경 화면이 아주 작다. 반드시 JSON 하나만 출력한다:
-{"title": "15자 이내 주제", "text": "한국어 80자 이내, 핵심 사실만 한두 문장"}
+{"title": "15자 이내 주제", "text": "한국어 80자 이내, 핵심 사실만 한두 문장", "image": "위키백과 문서 제목 또는 null"}
+image: 눈으로 보면 바로 알 수 있는 대상(사람, 장소, 건물, 동물, 식물, 음식, 제품, 작품)일 때만
+그 대상의 위키백과 문서 제목(한국어, 없으면 영어)을 쓴다. 숫자·날짜·환산·개념·방법 설명이면 null.
 링크, URL, 출처 표시, 괄호 속 사이트 이름은 절대 넣지 않는다.
 정확한 답이 없어도 질문과 관련해 쓸모 있는 일반 사실이 있으면 그것을 답한다.
 관련된 사실을 하나도 찾지 못했을 때만 {"skip": true}"""
@@ -370,7 +374,9 @@ def parse_reply(text: str) -> Assist | None:
     body = strip_links(str(data.get("text", "")))
     if not body:
         return None
-    return Assist(title[:40], body[:200])
+    image = data.get("image")
+    image = str(image).strip()[:80] if isinstance(image, str) and image.strip().lower() not in ("", "null", "none") else None
+    return Assist(title[:40], body[:200], image)
 
 
 def assistant_from_env(notes: Callable[[], str] | None = None) -> Assistant | None:

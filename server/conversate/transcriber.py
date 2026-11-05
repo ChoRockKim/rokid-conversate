@@ -52,11 +52,20 @@ class FasterWhisperTranscriber:
     def transcribe(self, audio: np.ndarray, *, partial: bool) -> str:
         return self._run(audio, partial=partial, language=self.language)
 
-    def transcribe_any_language(self, audio: np.ndarray) -> str:
-        """Partial in whatever language is spoken (used while a foreign speaker is present)."""
-        return self._run(audio, partial=True, language=None)
+    def partial_in(self, audio: np.ndarray, language: str | None) -> str:
+        """Partial in a language found earlier in the same utterance ([detect_partial])."""
+        return self._run(audio, partial=True, language=language)
 
-    def _run(self, audio: np.ndarray, *, partial: bool, language: str | None) -> str:
+    def detect_partial(self, audio: np.ndarray) -> tuple[str, str | None]:
+        """Partial plus the detected language. Detection reuses the encoder pass, so this costs
+        about the same as a forced-language partial. An unsure non-Korean guess is redone as
+        Korean (short Korean clips are sometimes taken for Japanese)."""
+        text, language, prob = self._run(audio, partial=True, language=None, info=True)
+        if language != "ko" and prob < 0.6:
+            return self._run(audio, partial=True, language="ko"), "ko"
+        return text, language
+
+    def _run(self, audio: np.ndarray, *, partial: bool, language: str | None, info: bool = False):
         model = self._get_model()
         audio = normalize(audio)
         with self._run_lock:
@@ -70,7 +79,10 @@ class FasterWhisperTranscriber:
                 # Each utterance is independent; carrying context makes Whisper repeat itself.
                 condition_on_previous_text=False,
             )
-            return " ".join(s.text.strip() for s in segments).strip()
+            text = " ".join(s.text.strip() for s in segments).strip()
+        if info:
+            return text, _info.language, float(_info.language_probability or 0.0)
+        return text
 
 
 def normalize(audio: np.ndarray, peak: float = 0.9, max_gain: float = 20.0) -> np.ndarray:
@@ -136,9 +148,13 @@ class HybridTranscriber:
         self.local = local
         self.final = final
 
-    def transcribe_any_language(self, audio: np.ndarray) -> str:
-        any_language = getattr(self.local, "transcribe_any_language", None)
-        return any_language(audio) if any_language else self.local.transcribe(audio, partial=True)
+    def detect_partial(self, audio: np.ndarray) -> tuple[str, str | None]:
+        detect = getattr(self.local, "detect_partial", None)
+        return detect(audio) if detect else (self.local.transcribe(audio, partial=True), None)
+
+    def partial_in(self, audio: np.ndarray, language: str | None) -> str:
+        partial_in = getattr(self.local, "partial_in", None)
+        return partial_in(audio, language) if partial_in else self.local.transcribe(audio, partial=True)
 
     def transcribe(self, audio: np.ndarray, *, partial: bool) -> str:
         if partial:

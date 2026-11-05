@@ -2,9 +2,13 @@ package com.chorockkim.conversate
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.Bundle
 import android.os.SystemClock
@@ -64,7 +68,8 @@ class HudView(context: Context) : View(context) {
         val charging: Boolean = false,
     )
 
-    data class Assist(val title: String, val text: String)
+    /** [image]: small greyscale picture of the subject (drawn green, right of the text). */
+    data class Assist(val title: String, val text: String, val image: Bitmap? = null)
 
     var onInput: ((GlassesInput.Action) -> Unit)? = null
 
@@ -156,6 +161,16 @@ class HudView(context: Context) : View(context) {
     private val updatePaint = paint(12f, green)
     private val assistTitle = paint(13f, green, bold = true)
     private val assistBody = paint(13f, Color.WHITE)
+    /** Grey picture -> HUD green: luminance into green (and a little blue, like #00ff66). */
+    private val imagePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+        colorFilter = ColorMatrixColorFilter(ColorMatrix(floatArrayOf(
+            0f, 0f, 0f, 0f, 0f,
+            0.299f, 0.587f, 0.114f, 0f, 0f,
+            0.12f, 0.235f, 0.045f, 0f, 0f,
+            0f, 0f, 0f, 1f, 0f,
+        )))
+    }
+    private val imageRect = RectF()
     private val assistBusy = paint(12f, dim)
     private val modalFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
     private val modalBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -362,13 +377,27 @@ class HudView(context: Context) : View(context) {
         // Size the card to its content, up to the reserved area.
         val title = assist.title
         val titleH = if (title.isNotEmpty() || busy) 19f else 0f
+        val image = assist.image
+        // Picture: at most IMAGE_SIZE square, aspect kept, at the right; text wraps beside it.
+        val imageW: Float
+        val imageH: Float
+        if (image != null && image.width > 0 && image.height > 0) {
+            val scale = minOf(IMAGE_SIZE / image.width, IMAGE_SIZE / image.height)
+            imageW = image.width * scale
+            imageH = image.height * scale
+        } else {
+            imageW = 0f
+            imageH = 0f
+        }
+        val textW = if (imageW > 0f) inner - imageW - IMAGE_GAP else inner
         val maxBodyLines = ((ASSIST_BOTTOM - ASSIST_TOP - 2 * MODAL_PAD - titleH) / 16f).toInt().coerceAtLeast(1)
-        val body = StaticLayout.Builder.obtain(assist.text, 0, assist.text.length, assistBody, inner.toInt())
+        val body = StaticLayout.Builder.obtain(assist.text, 0, assist.text.length, assistBody, textW.toInt())
             .setLineSpacing(0f, 1.1f)
             .setMaxLines(maxBodyLines)
             .setEllipsize(TextUtils.TruncateAt.END)
             .build()
-        val bottom = (ASSIST_TOP + 2 * MODAL_PAD + titleH + body.height).coerceAtMost(ASSIST_BOTTOM)
+        val content = maxOf(titleH + body.height, imageH)
+        val bottom = (ASSIST_TOP + 2 * MODAL_PAD + content).coerceAtMost(ASSIST_BOTTOM)
         modalRect.set(left, ASSIST_TOP, right, bottom)
         canvas.drawRoundRect(modalRect, MODAL_RADIUS, MODAL_RADIUS, modalFill)
         canvas.drawRoundRect(modalRect, MODAL_RADIUS, MODAL_RADIUS, modalBorder)
@@ -376,11 +405,15 @@ class HudView(context: Context) : View(context) {
         canvas.save()
         canvas.clipRect(modalRect)
         var y = ASSIST_TOP + MODAL_PAD
+        if (image != null && imageW > 0f) {
+            imageRect.set(right - MODAL_PAD - imageW, y, right - MODAL_PAD, y + imageH)
+            canvas.drawBitmap(image, null, imageRect, imagePaint)
+        }
         if (titleH > 0f) {
             val busyW = if (busy) assistBusy.measureText("생각 중...") + 8f else 0f
-            val t = TextUtils.ellipsize("✦ $title", assistTitle, inner - busyW, TextUtils.TruncateAt.END)
+            val t = TextUtils.ellipsize("✦ $title", assistTitle, textW - busyW, TextUtils.TruncateAt.END)
             canvas.drawText(t, 0, t.length, left + MODAL_PAD, y + 12f, assistTitle)
-            if (busy) canvas.drawText(thinking, right - MODAL_PAD - busyW + 8f, y + 12f, assistBusy)
+            if (busy) canvas.drawText(thinking, left + MODAL_PAD + textW - busyW + 8f, y + 12f, assistBusy)
             y += titleH
         }
         canvas.translate(left + MODAL_PAD, y)
@@ -421,6 +454,9 @@ class HudView(context: Context) : View(context) {
         const val CARD_SLIDE = 8f
         /** AI card: 70% of the width, centred. */
         const val MODAL_WIDTH = W * 0.7f
+        /** AI card picture: "a little small", fits beside 3-4 lines of text. */
+        const val IMAGE_SIZE = 56f
+        const val IMAGE_GAP = 8f
         const val MODAL_PAD = 8f
         const val MODAL_RADIUS = 6f
         const val CAPTION_BOTTOM = H - 30f

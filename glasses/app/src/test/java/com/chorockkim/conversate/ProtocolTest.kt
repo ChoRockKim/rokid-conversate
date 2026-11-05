@@ -34,6 +34,9 @@ class ProtocolTest {
             Protocol.parse("""{"type":"caption","id":2,"text":"Hello","final":true,"translation":"안녕하세요"}""")
         )
         assertEquals(ServerMessage.AssistStatus(true), Protocol.parse("""{"type":"assist_status","busy":true}"""))
+        val image = Protocol.parse("""{"type":"assist_image","title":"경복궁","png":"iVBORw=="}""") as ServerMessage.AssistImage
+        assertEquals("경복궁", image.title)
+        assertEquals(listOf(0x89, 0x50, 0x4E, 0x47), image.png.map { it.toInt() and 0xff })
         assertEquals(ServerMessage.Error("boom"), Protocol.parse("""{"type":"error","message":"boom"}"""))
     }
 

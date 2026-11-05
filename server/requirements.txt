@@ -5,3 +5,4 @@ webrtcvad-wheels>=2.0  # speech detection (segmenter)
 faster-whisper>=1.1
 openai>=2.0  # AI panel (assist)
 websockets>=13  # tools/send_wav.py
+pillow>=10  # AI card images (thumbnail -> small grey PNG)

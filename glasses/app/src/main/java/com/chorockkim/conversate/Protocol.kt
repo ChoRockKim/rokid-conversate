@@ -41,6 +41,8 @@ object Protocol {
         data class Error(val message: String) : ServerMessage
         /** AI result for the top panel (search answer, summary, ...). Empty text clears it. */
         data class Assist(val title: String, val text: String) : ServerMessage
+        /** Picture for the card with [title] (greyscale PNG bytes). */
+        class AssistImage(val title: String, val png: ByteArray) : ServerMessage
         /** The server started (true) or finished (false) an AI request. */
         data class AssistStatus(val busy: Boolean) : ServerMessage
         data class Unknown(val raw: String) : ServerMessage
@@ -59,10 +61,15 @@ object Protocol {
             )
             "error" -> ServerMessage.Error(o.optString("message"))
             "assist" -> ServerMessage.Assist(o.optString("title"), o.optString("text"))
+            "assist_image" -> ServerMessage.AssistImage(
+                o.optString("title"), java.util.Base64.getDecoder().decode(o.optString("png")),
+            )
             "assist_status" -> ServerMessage.AssistStatus(o.optBoolean("busy"))
             else -> ServerMessage.Unknown(text)
         }
     } catch (e: JSONException) {
+        ServerMessage.Unknown(text)
+    } catch (e: IllegalArgumentException) {  // bad base64
         ServerMessage.Unknown(text)
     }
 }

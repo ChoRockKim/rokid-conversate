@@ -191,8 +191,6 @@ def test_foreign_speech_opens_live_translation():
         def transcribe(self, audio, *, partial):
             return "How much is this?"
 
-        def transcribe_any_language(self, audio):
-            return "How much"
 
     class Tr:
         def translate(self, text):
@@ -214,3 +212,53 @@ def test_foreign_speech_opens_live_translation():
                            and m.get("translation") == "이것은 얼마입니까?")
         assert final["text"] == "How much is this?"
     assert len(opened) == 1
+
+
+def test_foreign_partial_opens_live_early_and_replays_audio():
+    """A foreign first partial opens live translation before the sentence ends, and the
+    utterance so far is replayed into it; a Korean partial does not."""
+    opened = []
+
+    class FakeLive:
+        def __init__(self, on_korean):
+            self.fed = []
+            opened.append(self)
+
+        async def start(self):
+            pass
+
+        async def feed(self, pcm):
+            self.fed.append(len(pcm))
+
+        async def stop(self):
+            pass
+
+    class Detecting:
+        def __init__(self, text, language):
+            self.text, self.language = text, language
+
+        def transcribe(self, audio, *, partial):
+            return self.text
+
+        def detect_partial(self, audio):
+            return self.text, self.language
+
+        def partial_in(self, audio, language):
+            assert language == self.language
+            return self.text
+
+    with client(stt=Detecting("Where is the", "en"), live_factory=FakeLive).websocket_connect("/ws", headers=AUTH) as ws:
+        ws.send_text(json.dumps({"type": "hello"}))
+        ws.receive_text()
+        ws.send_bytes(silence(300) + tone(2500))
+        read_until(ws, lambda m: m["type"] == "caption" and not m["final"])
+        assert len(opened) == 1
+        assert opened[0].fed and opened[0].fed[0] >= 16000 * 2  # at least a second replayed
+
+    opened.clear()
+    with client(stt=Detecting("어디로 가", "ko"), live_factory=FakeLive).websocket_connect("/ws", headers=AUTH) as ws:
+        ws.send_text(json.dumps({"type": "hello"}))
+        ws.receive_text()
+        ws.send_bytes(silence(300) + tone(2500))
+        read_until(ws, lambda m: m["type"] == "caption" and not m["final"])
+    assert opened == []

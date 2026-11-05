@@ -39,12 +39,15 @@ from .segmenter import SAMPLE_RATE, Event, Segmenter, SegmenterConfig
 from .transcriber import Transcriber, transcriber_from_env
 from .translate import Translator, needs_translation, translator_from_env
 from .live_translate import LiveTranslator
+from .images import ImageFinder
 
 log = logging.getLogger("conversate")
 
 LEVEL_INTERVAL_S = 0.25
 # Live translation closes after this long without foreign speech (it is billed per minute open).
-LIVE_IDLE_S = 30.0
+LIVE_IDLE_S = 60.0
+# Audio kept for replay into a live translation session that opens mid-utterance.
+REPLAY_MAX_S = 8.0
 AUDIO_LOG_INTERVAL_S = 5.0
 
 
@@ -79,6 +82,8 @@ def create_app(
     converter = None if os.environ.get("CONVERT", "1") == "0" else (lambda text: find_conversions(text, rates))
     ai = assistant_from_env(notes.text) if assistant is _FROM_ENV else assistant
     tr = translator_from_env() if translator is _FROM_ENV else translator
+    # Wikipedia pictures on AI cards (IMAGES=0 turns them off).
+    images = None if os.environ.get("IMAGES", "1") == "0" else ImageFinder()
     if live_factory is _FROM_ENV:
         live_on = os.environ.get("OPENAI_API_KEY") and os.environ.get("LIVE_TRANSLATE", "1") != "0"
         live_factory = LiveTranslator if live_on else None
@@ -103,7 +108,7 @@ def create_app(
             return
         await websocket.accept()
         log.info("glasses connected from %s", websocket.client)
-        await Session(websocket, stt, ai, segmenter_config, tr, live_factory, hist, converter).run()
+        await Session(websocket, stt, ai, segmenter_config, tr, live_factory, hist, converter, images).run()
         log.info("glasses disconnected")
 
     return app
@@ -128,7 +133,9 @@ class Session:
         live_factory: Callable[..., LiveTranslator] | None = None,
         history: ConversationLog | None = None,
         converter: Callable[[str], list] | None = None,
+        images: ImageFinder | None = None,
     ) -> None:
+        self.images = images
         self.history = history
         self.ws = websocket
         self.stt = stt
@@ -143,6 +150,10 @@ class Session:
         self.live_text = ""
         self.partial_text: dict[int, str] = {}   # newest partial text of a segment in progress
         self.final_text: dict[int, str] = {}     # foreign finals waiting for their text translation
+        self.recent: deque[bytes] = deque()      # last REPLAY_MAX_S of audio
+        self.recent_bytes = 0
+        self.recent_total = 0                    # bytes ever added (to find what came later)
+        self.partial_language: dict[int, str | None] = {}
         self.assist = (
             AssistEngine(ai, self._send_assist, on_busy=self._send_assist_busy, converter=converter)
             if ai is not None else None
@@ -174,6 +185,18 @@ class Session:
         if self.history is not None:
             await self._record(self.history.add_card(result.title, result.text))
         await self.send({"type": "assist", "title": result.title, "text": result.text})
+        if result.image and self.images is not None:
+            asyncio.create_task(self._send_image(result.title, result.image))
+
+    async def _send_image(self, title: str, article: str) -> None:
+        """After the card: its text must not wait on Wikipedia (~0.5-1 s)."""
+        try:
+            png = await asyncio.to_thread(self.images.find, article)
+        except Exception:
+            log.exception("image lookup failed")
+            return
+        if png:
+            await self.send({"type": "assist_image", "title": title, "png": png})
 
     async def _send_assist_busy(self, busy: bool) -> None:
         await self.send({"type": "assist_status", "busy": busy})
@@ -200,6 +223,7 @@ class Session:
                 pcm = message["bytes"]
                 self.received_samples += len(pcm) // 2
                 self._track_audio(pcm)
+                self._remember(pcm)
                 if self.live is not None:
                     if time.monotonic() > self.live_until:
                         await self._stop_live()
@@ -220,6 +244,21 @@ class Session:
                     )
             elif message.get("text") is not None:
                 await self._on_text(message["text"])
+
+    def _remember(self, pcm: bytes) -> None:
+        self.recent.append(pcm)
+        self.recent_bytes += len(pcm)
+        self.recent_total += len(pcm)
+        while self.recent and self.recent_bytes - len(self.recent[0]) >= REPLAY_MAX_S * SAMPLE_RATE * 2:
+            self.recent_bytes -= len(self.recent.popleft())
+
+    def _recent_audio(self, seconds: float, since_total: int | None = None) -> bytes:
+        """The last [seconds] of audio, or (with [since_total]) everything after that point."""
+        data = b"".join(self.recent)
+        if since_total is not None:
+            return data[len(data) - (self.recent_total - since_total):] if self.recent_total > since_total else b""
+        n = int(seconds * SAMPLE_RATE) * 2
+        return data[-n:]
 
     def _track_audio(self, pcm: bytes) -> None:
         """Logs what actually arrives every 5 s: seconds of audio, max/mean RMS, speech or not.
@@ -312,10 +351,19 @@ class Session:
         started = time.monotonic()
         try:
             partial = event.kind == "partial"
-            any_language = getattr(self.stt, "transcribe_any_language", None)
-            if partial and self.live is not None and any_language is not None:
-                # Foreign speaker present: the Korean-only partial model wrote English as Hangul.
-                text = await asyncio.to_thread(any_language, event.audio)
+            detect = getattr(self.stt, "detect_partial", None)
+            seg = event.segment_id
+            if partial and detect is not None:
+                # Language found on an utterance's first partial (~1 s in), then reused: finds a
+                # foreign speaker early, and English is no longer forced through Korean (that
+                # took 7-13 s and made up words). Detection costs ~1 s more, so only once.
+                if seg not in self.partial_language:
+                    text, language = await asyncio.to_thread(detect, event.audio)
+                    self.partial_language[seg] = language
+                    for old in [k for k in self.partial_language if k < seg - 5]:
+                        del self.partial_language[old]
+                else:
+                    text = await asyncio.to_thread(self.stt.partial_in, event.audio, self.partial_language[seg])
             else:
                 text = await asyncio.to_thread(self.stt.transcribe, event.audio, partial=partial)
         except Exception as exc:  # keep the session alive if one call fails
@@ -332,6 +380,10 @@ class Session:
         seg = event.segment_id
         foreign = bool(text and needs_translation(text))
         if not final:
+            language = self.partial_language.get(seg)
+            if self.live is None and foreign and language not in (None, "ko"):
+                # Replay this utterance so far: its start is translated too.
+                await self._start_live(replay_s=len(event.audio) / SAMPLE_RATE + 1.0)
             if self.live is not None:
                 self._live_claim(seg)
                 self.partial_text[seg] = text
@@ -393,17 +445,28 @@ class Session:
             # Tail of a finished utterance, until its text translation replaces it.
             await self._send_caption(seg, self.final_text[seg], True, self.live_text.strip())
 
-    async def _start_live(self) -> None:
+    async def _start_live(self, replay_s: float = 0.0) -> None:
         self.live_until = time.monotonic() + LIVE_IDLE_S
         if self.live is not None or self.live_factory is None:
             return
+        started = time.monotonic()
         live = self.live_factory(on_korean=self._on_live_korean)
         try:
             await live.start()
+            if replay_s > 0:
+                # The utterance so far plus what arrived while connecting, in order; then any
+                # chunk that came in during that send. Only then does the receive loop feed
+                # (self.live is set below).
+                mark = self.recent_total
+                await live.feed(self._recent_audio(replay_s + time.monotonic() - started))
+                while self.recent_total > mark:
+                    newer, mark = self._recent_audio(0, since_total=mark), self.recent_total
+                    await live.feed(newer)
         except Exception:
             log.exception("live translation: could not open a session")
             return
         self.live = live
+        log.info("live translation ready in %.2fs (replayed %.1fs)", time.monotonic() - started, replay_s)
 
     async def _stop_live(self) -> None:
         live, self.live = self.live, None

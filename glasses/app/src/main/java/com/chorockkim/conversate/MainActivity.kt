@@ -300,6 +300,12 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
                 assist = if (message.text.isBlank()) null else HudView.Assist(message.title, message.text)
                 if (assist != null) return showAssist()
             }
+            is Protocol.ServerMessage.AssistImage -> {
+                val current = assist ?: return
+                if (current.title != message.title) return  // a newer card replaced it
+                val bitmap = android.graphics.BitmapFactory.decodeByteArray(message.png, 0, message.png.size) ?: return
+                assist = current.copy(image = bitmap)
+            }
             is Protocol.ServerMessage.AssistStatus -> assistBusy = message.busy
             is Protocol.ServerMessage.Level -> {
                 // The server reports "someone is talking" every 0.25 s. Keep captions up while

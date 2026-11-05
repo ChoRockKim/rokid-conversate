@@ -67,6 +67,25 @@ class HudViewSnapshotTest {
         "02_long",
     )
 
+    @Test fun aiCardWithPicture() = paparazzi.snapshot(
+        hud(HudView.State(connection = "연결됨", connected = true, listening = true, level = 900.0, lines = MEETING, battery = 82,
+            assist = HudView.Assist("경복궁", "1395년 조선 태조가 세운 첫 법궁이다. 정문은 광화문이다.", picture()))),
+        "12_ai_card_picture",
+    )
+
+    /** Stand-in for a Wikipedia thumbnail: a grey 96x72 "photo" (sky, roof, building). */
+    private fun picture(): android.graphics.Bitmap {
+        val b = android.graphics.Bitmap.createBitmap(96, 72, android.graphics.Bitmap.Config.ARGB_8888)
+        val c = android.graphics.Canvas(b)
+        val p = android.graphics.Paint()
+        for (y in 0 until 72) { p.color = Color.rgb(200 - y, 200 - y, 200 - y); c.drawLine(0f, y.toFloat(), 96f, y.toFloat(), p) }
+        p.color = Color.rgb(40, 40, 40)
+        c.drawPath(android.graphics.Path().apply { moveTo(10f, 34f); lineTo(48f, 16f); lineTo(86f, 34f); close() }, p)
+        p.color = Color.rgb(120, 120, 120); c.drawRect(18f, 34f, 78f, 64f, p)
+        p.color = Color.rgb(20, 20, 20); c.drawRect(42f, 44f, 54f, 64f, p)
+        return b
+    }
+
     @Test fun aiThinking() = paparazzi.snapshot(
         hud(HudView.State(connection = "연결됨", connected = true, listening = true, level = 900.0, lines = MEETING, assistBusy = true, battery = 64, charging = true)),
         "07_ai_thinking",
