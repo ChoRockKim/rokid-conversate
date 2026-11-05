@@ -43,7 +43,7 @@ class SegmenterConfig:
     # Ask for a partial transcript every this much new audio inside an utterance (0 = never).
     partial_every_ms: int = 1_500
     # Audio kept from before speech started, so the first syllable is not clipped.
-    pre_roll_ms: int = 300
+    pre_roll_ms: int = 600
 
 
 @dataclass

@@ -36,7 +36,7 @@ def test_one_utterance_gives_one_final():
     finals = [e for e in events if e.kind == "final"]
     assert len(finals) == 1
     # speech + pre-roll + trailing silence until the cut, roughly
-    assert 1.2 <= len(finals[0].audio) / SAMPLE_RATE <= 2.4
+    assert 1.2 <= len(finals[0].audio) / SAMPLE_RATE <= 2.7  # + 0.6 s pre-roll, ~0.7 s tail
 
 
 def test_silence_only_gives_nothing():
