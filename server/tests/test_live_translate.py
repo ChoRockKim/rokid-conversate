@@ -22,8 +22,9 @@ def test_joiner_restores_space_after_pause():
 
 def test_joiner_trusts_a_stream_that_sends_spaces():
     j = KoreanJoiner()
-    pieces = [j.add("저", 0.0), j.add("는", 0.1), j.add(" 근", 0.2), j.add("처", 0.8), j.add("에서", 0.8)]
-    assert "".join(pieces) == "저는 근처에서"
+    pieces = [j.add("저", 0.0), j.add("는", 0.1), j.add(" 근", 0.2), j.add("처", 0.8), j.add("에서", 0.8),
+              j.add(" 찾고", 0.9), j.add(" 있어요", 1.0), j.add("여기", 1.8), j.add("요.", 1.9), j.add("네", 1.95)]
+    assert "".join(pieces) == "저는 근처에서 찾고 있어요 여기요. 네"
 
 
 class FakeWs:
@@ -74,3 +75,8 @@ def test_session_flow():
         assert "".join(pieces) == "안녕하세요."
 
     asyncio.run(main())
+
+
+def test_joiner_keeps_numbers_together():
+    j = KoreanJoiner()
+    assert "".join([j.add("1,", 0.0), j.add("500", 0.1), j.add("원", 0.2)]) == "1,500원"

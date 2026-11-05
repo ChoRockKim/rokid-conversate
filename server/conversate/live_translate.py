@@ -47,11 +47,13 @@ class KoreanJoiner:
     2026-11-05). Inside a chunk the deltas arrive back to back; a new chunk comes after a pause,
     so a pause between deltas is taken as a word boundary.
 
-    Later sessions did send the spaces (" 실", "례", " 가까", "운"), and there a pause inside a
-    word ("근" ... 0.4 s ... "처") made "근 처". So once a delta carries a space, the stream's own
-    spacing is used and pauses are ignored."""
+    Later sessions sent the spaces inside a phrase (" 실", "례", " 가까", "운") but still none
+    between phrases ("있어요여기"), and a pause could fall inside a word ("근" 0.4 s "처").
+    So: always a space after .?!, ; after a pause, a space when the stream sends no spaces at
+    all, or when the syllable before is a usual word ending (요, 다, 고, 서 ...)."""
 
     GAP_S = 0.5
+    ENDINGS = set("요다죠까네고서데며면게지든니도는은을를가이에의와과로만")
 
     def __init__(self) -> None:
         self.last_at: float | None = None
@@ -63,12 +65,13 @@ class KoreanJoiner:
             return ""
         if not self.spaced and self.last_char and (delta[0].isspace() or delta[-1].isspace()):
             self.spaced = True
-        gap = not self.spaced and self.last_at is not None and now - self.last_at >= self.GAP_S
+        paused = self.last_at is not None and now - self.last_at >= self.GAP_S
         self.last_at = now
         piece = delta
-        if gap and self.last_char and not self.last_char.isspace() and not delta[0].isspace() \
-                and delta[0] not in ".,?!)…" and self.last_char not in "(":
-            piece = " " + delta
+        prev, first = self.last_char, delta[0]
+        if prev and not prev.isspace() and not first.isspace() and first not in ".,?!)…~" and prev not in "(":
+            if (prev in ".,?!" and not first.isdigit()) or (paused and (not self.spaced or prev in self.ENDINGS)):
+                piece = " " + delta
         self.last_char = delta[-1]
         return piece
 
