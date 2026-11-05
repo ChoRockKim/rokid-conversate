@@ -48,6 +48,8 @@ LEVEL_INTERVAL_S = 0.25
 LIVE_IDLE_S = 60.0
 # Audio kept for replay into a live translation session that opens mid-utterance.
 REPLAY_MAX_S = 8.0
+# Live pieces held for an utterance with no partial yet are dropped after this long.
+LIVE_HOLD_S = 4.0
 AUDIO_LOG_INTERVAL_S = 5.0
 
 
@@ -157,6 +159,8 @@ class Session:
         self.recent_total = 0                    # bytes ever added (to find what came later)
         self.partial_language: dict[int, str | None] = {}
         self.live_starting = False
+        self.live_piece_at = 0.0
+        self.live_claimed: int | None = None
         self.live_only: set[int] = set()         # foreign finals translated by the live stream
         self.assist = (
             AssistEngine(ai, self._send_assist, on_busy=self._send_assist_busy, converter=converter)
@@ -437,12 +441,20 @@ class Session:
     async def _live_claim(self, seg: int) -> None:
         """A new utterance started: live Korean from now on belongs to it. Pieces arriving after
         the previous utterance's final (the translation lags speech) went to that one."""
-        if self.live_seg is None or self.live_seg < seg:
-            # Pieces held for an utterance that had no partial yet carry over to this one.
-            held = self.live_seg is not None and self.live_seg > self.last_final_id
-            if not held:
+        if self.live_claimed == seg:
+            return
+        self.live_claimed = seg
+        # Pieces held for an utterance that had no partial yet carry over to this one, unless
+        # they are from long ago (an English video's last words ended up under the first
+        # Japanese line, 2026-11-05).
+        held = self.live_seg is not None and self.live_seg > self.last_final_id
+        if held and time.monotonic() - self.live_piece_at > LIVE_HOLD_S:
+            held = False
+        if not held:
+            if self.live_seg is not None and self.live_seg < seg:
                 await self._settle_live()
-            self.live_seg, self.live_text = seg, (self.live_text if held else "")
+            self.live_text = ""
+        self.live_seg = seg
 
     async def _settle_live(self) -> None:
         """The live stream is done with [live_seg]: if its translation is the one shown, record
@@ -465,6 +477,11 @@ class Session:
 
     async def _on_live_korean(self, piece: str) -> None:
         self.live_until = time.monotonic() + LIVE_IDLE_S
+        if (self.live_seg is not None and self.live_seg > self.last_final_id
+                and self.live_seg not in self.partial_text
+                and time.monotonic() - self.live_piece_at > LIVE_HOLD_S):
+            self.live_text = ""  # stale held pieces: drop them (see _live_claim)
+        self.live_piece_at = time.monotonic()
         finished = self.live_seg is not None and self.live_seg <= self.last_final_id
         if self.live_seg is None or (finished and (
                 self.live_seg not in self.final_text or self.segmenter._state.in_speech)):
@@ -482,6 +499,11 @@ class Session:
             text = self.partial_text[seg]
             if not text or needs_translation(text):
                 await self._send_caption(seg, text, False, self.live_text.strip())
+        elif seg > self.last_final_id and self.partial_language.get(seg) not in (None, "ko"):
+            # Foreign speech whose first partial is still being transcribed (Whisper on CPU,
+            # ~1 s): show the translation now, the original joins it when ready. (It waited for
+            # the partial, which made Japanese start at 3.3 s.)
+            await self._send_caption(seg, "", False, self.live_text.strip())
         elif seg in self.final_text:
             # Tail of a finished utterance (until its sentence translation replaces it, if any).
             await self._send_caption(seg, self.final_text[seg], True, self.live_text.strip())
@@ -495,6 +517,8 @@ class Session:
             await self._open_live(replay_s)
         finally:
             self.live_starting = False
+        self.live_piece_at = 0.0
+        self.live_claimed: int | None = None
 
     async def _open_live(self, replay_s: float) -> None:
         started = time.monotonic()

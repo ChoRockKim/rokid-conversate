@@ -296,3 +296,59 @@ def test_live_pieces_before_first_partial_go_to_the_next_utterance():
         assert s._live_for(2, s.partial_text[2]) == "좋은 식당을 찾고"
 
     asyncio.run(main())
+
+
+def test_foreign_translation_shows_before_its_first_partial_text():
+    """Language known (foreign) but the partial not transcribed yet: the translation goes out
+    with an empty original. Unknown or Korean: held back."""
+    import asyncio
+    from conversate.main import Session
+
+    class Ws:
+        def __init__(self):
+            self.sent = []
+
+        async def send_text(self, t):
+            self.sent.append(json.loads(t))
+
+    class Stt:
+        def transcribe(self, audio, *, partial):
+            return ""
+
+    async def main():
+        ws = Ws()
+        s = Session(ws, Stt())
+        s.live = object()
+        s.last_final_id = 3
+        await s._on_live_korean("오늘은")          # language of #4 not known yet
+        assert ws.sent == []
+        s.partial_language[4] = "ja"
+        await s._on_live_korean(" 평소보다")
+        assert ws.sent[-1] == {"type": "caption", "id": 4, "text": "", "final": False, "translation": "오늘은 평소보다"}
+
+    asyncio.run(main())
+
+
+def test_stale_held_translation_is_dropped():
+    import asyncio
+    import time as _t
+    from conversate.main import Session
+
+    class Ws:
+        async def send_text(self, t):
+            pass
+
+    class Stt:
+        def transcribe(self, audio, *, partial):
+            return ""
+
+    async def main():
+        s = Session(Ws(), Stt())
+        s.live = object()
+        s.last_final_id = 3
+        await s._on_live_korean("로켓은 가장 쓰기 쉬운")   # held for #4, then a long silence
+        s.live_piece_at = _t.monotonic() - 30
+        await s._live_claim(4)
+        assert s.live_text == ""
+
+    asyncio.run(main())
