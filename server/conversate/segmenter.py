@@ -46,6 +46,9 @@ class SegmenterConfig:
     max_segment_ms: int = 12_000
     # Ask for a partial transcript every this much new audio inside an utterance (0 = never).
     partial_every_ms: int = 1_500
+    # The first one sooner: it also finds the language, and a foreign one starts live
+    # translation (waiting 1.5 s for it made translation start after short sentences ended).
+    first_partial_ms: int = 800
     # Audio kept from before speech started, so the first syllable is not clipped.
     pre_roll_ms: int = 600
 
@@ -65,6 +68,7 @@ class _State:
     speech_frames: int = 0
     silence_frames: int = 0
     frames_since_partial: int = 0
+    partials: int = 0
 
 
 class Segmenter:
@@ -133,6 +137,7 @@ class Segmenter:
                 st.speech_frames = 1
                 st.silence_frames = 0
                 st.frames_since_partial = 0
+                st.partials = 0
             return None
 
         st.speech.append(frame)
@@ -150,8 +155,10 @@ class Segmenter:
             return self._finish()
         if len(st.speech) >= self._frames(cfg.max_segment_ms):
             return self._finish()
-        if cfg.partial_every_ms and st.frames_since_partial >= self._frames(cfg.partial_every_ms):
+        every = cfg.first_partial_ms if st.partials == 0 and cfg.first_partial_ms else cfg.partial_every_ms
+        if cfg.partial_every_ms and st.frames_since_partial >= self._frames(every):
             st.frames_since_partial = 0
+            st.partials += 1
             return Event("partial", _to_float(st.speech), self._next_id)
         return None
 

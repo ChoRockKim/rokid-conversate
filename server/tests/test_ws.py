@@ -166,8 +166,7 @@ def test_foreign_speech_gets_a_translation():
 
 def test_foreign_speech_opens_live_translation():
     """After the first foreign final, live Korean is attached to our own captions of the next
-    utterance (original from our STT, translation as it streams), then replaced by the text
-    translation of the final."""
+    utterance (original from our STT, translation as it streams) and kept when it is final."""
     opened = []
 
     class FakeLive:
@@ -206,11 +205,12 @@ def test_foreign_speech_opens_live_translation():
         ws.send_bytes(silence(500))
         ws.send_bytes(tone(800))
         ws.send_text(json.dumps({"type": "stop"}))
-        live = read_until(ws, lambda m: m["type"] == "caption" and m.get("translation") == "이거 얼마예요?")
-        assert live["id"] > first["id"]
-        final = read_until(ws, lambda m: m["type"] == "caption" and m["id"] == live["id"] and m["final"]
-                           and m.get("translation") == "이것은 얼마입니까?")
-        assert final["text"] == "How much is this?"
+        seen = []
+        live = read_until(ws, lambda m: seen.append(m) or (
+            m["type"] == "caption" and m["final"] and m.get("translation") == "이거 얼마예요?"))
+        assert live["id"] > first["id"] and live["text"] == "How much is this?"
+        # The live translation stays (no swap to the sentence translation: the text jumped).
+        assert not any(m.get("translation") == "이것은 얼마입니까?" and m["id"] == live["id"] for m in seen)
     assert len(opened) == 1
 
 
@@ -240,8 +240,8 @@ def test_foreign_partial_opens_live_early_and_replays_audio():
         def transcribe(self, audio, *, partial):
             return self.text
 
-        def detect_partial(self, audio):
-            return self.text, self.language
+        def detect_language(self, audio):
+            return self.language
 
         def partial_in(self, audio, language):
             assert language == self.language
@@ -289,7 +289,7 @@ def test_live_pieces_before_first_partial_go_to_the_next_utterance():
         s.live_seg, s.live_text = 1, "실례합니다."
         await s._on_live_korean("좋은 식당을")  # #1 already translated (not in final_text)
         assert (s.live_seg, s.live_text) == (2, "좋은 식당을")
-        s._live_claim(2)
+        await s._live_claim(2)
         assert s.live_text == "좋은 식당을"
         await s._on_live_korean(" 찾고")
         s.partial_text[2] = "I am looking for a good restaurant"

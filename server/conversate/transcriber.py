@@ -34,6 +34,7 @@ class FasterWhisperTranscriber:
         self.compute_type = os.environ.get("WHISPER_COMPUTE_TYPE", "default")
         self.language = os.environ.get("WHISPER_LANGUAGE", "ko") or None
         self._model = None
+        self.language_id = LanguageId()
         self._load_lock = threading.Lock()
         # One CTranslate2 model is not meant to be driven by many threads at once.
         self._run_lock = threading.Lock()
@@ -56,14 +57,8 @@ class FasterWhisperTranscriber:
         """Partial in a language found earlier in the same utterance ([detect_partial])."""
         return self._run(audio, partial=True, language=language)
 
-    def detect_partial(self, audio: np.ndarray) -> tuple[str, str | None]:
-        """Partial plus the detected language. Detection reuses the encoder pass, so this costs
-        about the same as a forced-language partial. An unsure non-Korean guess is redone as
-        Korean (short Korean clips are sometimes taken for Japanese)."""
-        text, language, prob = self._run(audio, partial=True, language=None, info=True)
-        if language != "ko" and prob < 0.6:
-            return self._run(audio, partial=True, language="ko"), "ko"
-        return text, language
+    def detect_language(self, audio: np.ndarray) -> str:
+        return self.language_id.detect(audio)
 
     def _run(self, audio: np.ndarray, *, partial: bool, language: str | None, info: bool = False):
         model = self._get_model()
@@ -83,6 +78,40 @@ class FasterWhisperTranscriber:
         if info:
             return text, _info.language, float(_info.language_probability or 0.0)
         return text
+
+
+class LanguageId:
+    """Spoken language of the first ~1 s of an utterance, with a small separate Whisper model.
+
+    Measured on our clips (0.8 s and 1.2 s of speech): "base" got all 5 right in ~0.3 s;
+    "tiny" took a Korean one for Chinese; the "small" model's own detection cost ~1.5 s per
+    partial. Korean wins unless another language is clearly ahead, since a wrong "foreign"
+    opens a paid translation session and writes the partial in the wrong language.
+
+    Environment: LANGID_MODEL (default base).
+    """
+
+    def __init__(self) -> None:
+        self.model_name = os.environ.get("LANGID_MODEL", "base")
+        self._model = None
+        self._lock = threading.Lock()
+
+    def _get_model(self):
+        with self._lock:
+            if self._model is None:
+                from faster_whisper import WhisperModel
+
+                self._model = WhisperModel(self.model_name, device="cpu", compute_type="int8")
+            return self._model
+
+    def detect(self, audio: np.ndarray) -> str:
+        model = self._get_model()
+        with self._lock:
+            language, prob, all_probs = model.detect_language(normalize(audio))
+        ko = dict(all_probs or []).get("ko", 0.0)
+        if language != "ko" and prob >= 0.5 and ko < 0.1:
+            return language
+        return "ko"
 
 
 def normalize(audio: np.ndarray, peak: float = 0.9, max_gain: float = 20.0) -> np.ndarray:
@@ -148,9 +177,9 @@ class HybridTranscriber:
         self.local = local
         self.final = final
 
-    def detect_partial(self, audio: np.ndarray) -> tuple[str, str | None]:
-        detect = getattr(self.local, "detect_partial", None)
-        return detect(audio) if detect else (self.local.transcribe(audio, partial=True), None)
+    def detect_language(self, audio: np.ndarray) -> str:
+        detect = getattr(self.local, "detect_language", None)
+        return detect(audio) if detect else "ko"
 
     def partial_in(self, audio: np.ndarray, language: str | None) -> str:
         partial_in = getattr(self.local, "partial_in", None)

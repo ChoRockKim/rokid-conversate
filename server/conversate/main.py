@@ -91,6 +91,8 @@ def create_app(
     if os.environ.get("WHISPER_PRELOAD") == "1" and hasattr(local, "_get_model"):
         # Load the model in the background at startup, not on the first caption.
         threading.Thread(target=local._get_model, daemon=True, name="whisper-preload").start()
+        if hasattr(local, "language_id"):
+            threading.Thread(target=local.language_id._get_model, daemon=True, name="langid-preload").start()
     expected = token if token is not None else os.environ.get("CONVERSATE_TOKEN", "")
     app.include_router(ota or ota_router_from_env(expected))
     app.include_router(notes_router(notes, expected))
@@ -154,6 +156,8 @@ class Session:
         self.recent_bytes = 0
         self.recent_total = 0                    # bytes ever added (to find what came later)
         self.partial_language: dict[int, str | None] = {}
+        self.live_starting = False
+        self.live_only: set[int] = set()         # foreign finals translated by the live stream
         self.assist = (
             AssistEngine(ai, self._send_assist, on_busy=self._send_assist_busy, converter=converter)
             if ai is not None else None
@@ -361,19 +365,21 @@ class Session:
         started = time.monotonic()
         try:
             partial = event.kind == "partial"
-            detect = getattr(self.stt, "detect_partial", None)
+            detect = getattr(self.stt, "detect_language", None)
             seg = event.segment_id
             if partial and detect is not None:
-                # Language found on an utterance's first partial (~1 s in), then reused: finds a
-                # foreign speaker early, and English is no longer forced through Korean (that
-                # took 7-13 s and made up words). Detection costs ~1 s more, so only once.
-                if seg not in self.partial_language:
-                    text, language = await asyncio.to_thread(detect, event.audio)
+                # The language is found on an utterance's first partial (0.8 s in, ~0.3 s with
+                # a small model) and reused. A foreign one starts live translation right away,
+                # before this partial is even transcribed.
+                language = self.partial_language.get(seg)
+                if language is None:
+                    language = await asyncio.to_thread(detect, event.audio)
                     self.partial_language[seg] = language
                     for old in [k for k in self.partial_language if k < seg - 5]:
                         del self.partial_language[old]
-                else:
-                    text = await asyncio.to_thread(self.stt.partial_in, event.audio, self.partial_language[seg])
+                    if language != "ko" and self.live is None and self.live_factory is not None:
+                        asyncio.create_task(self._start_live(replay_s=len(event.audio) / SAMPLE_RATE + 0.5))
+                text = await asyncio.to_thread(self.stt.partial_in, event.audio, language)
             else:
                 text = await asyncio.to_thread(self.stt.transcribe, event.audio, partial=partial)
         except Exception as exc:  # keep the session alive if one call fails
@@ -390,13 +396,11 @@ class Session:
         seg = event.segment_id
         foreign = bool(text and needs_translation(text))
         if not final:
-            language = self.partial_language.get(seg)
-            if self.live is None and foreign and language not in (None, "ko"):
-                # Replay this utterance so far: its start is translated too.
-                await self._start_live(replay_s=len(event.audio) / SAMPLE_RATE + 1.0)
+            # Kept even before live translation is up: it opens in the background, and its
+            # first pieces attach to this caption at once.
+            self.partial_text[seg] = text
             if self.live is not None:
-                self._live_claim(seg)
-                self.partial_text[seg] = text
+                await self._live_claim(seg)
                 await self._send_caption(seg, text, False, self._live_for(seg, text))
             elif text:
                 await self._send_caption(seg, text, False, None)
@@ -410,7 +414,12 @@ class Session:
             if self.live is not None:
                 self.live_until = time.monotonic() + LIVE_IDLE_S
             self.final_text[seg] = text
-            if self.translator is not None:
+            if live:
+                # The live stream already translated it: keep that (the late tail still
+                # streams in) instead of swapping in the sentence translation a second later,
+                # which made the text jump.
+                self.live_only.add(seg)
+            elif self.translator is not None:
                 asyncio.create_task(self._translate(seg, text))
             await self._start_live()
         elif self.live_seg == seg:
@@ -425,13 +434,27 @@ class Session:
             message["translation"] = translation
         await self.send(message)
 
-    def _live_claim(self, seg: int) -> None:
+    async def _live_claim(self, seg: int) -> None:
         """A new utterance started: live Korean from now on belongs to it. Pieces arriving after
         the previous utterance's final (the translation lags speech) went to that one."""
         if self.live_seg is None or self.live_seg < seg:
             # Pieces held for an utterance that had no partial yet carry over to this one.
             held = self.live_seg is not None and self.live_seg > self.last_final_id
+            if not held:
+                await self._settle_live()
             self.live_seg, self.live_text = seg, (self.live_text if held else "")
+
+    async def _settle_live(self) -> None:
+        """The live stream is done with [live_seg]: if its translation is the one shown, record
+        it in the history (the sentence translation path records its own)."""
+        seg = self.live_seg
+        if seg is None or seg not in self.live_only:
+            return
+        self.live_only.discard(seg)
+        text = self.final_text.pop(seg, None)
+        korean = self.live_text.strip()
+        if text and korean and self.history is not None:
+            await self._record(self.history.add_translation(text, korean))
 
     def _live_for(self, seg: int, text: str) -> str | None:
         if self.live_seg != seg or not self.live_text.strip():
@@ -449,6 +472,7 @@ class Session:
             # ~1 s late): it belongs to the next utterance, not the finished one. A finished
             # one only takes "tail" pieces until its sentence translation arrives, and not
             # once someone is talking again. (Its start was dropped, 2026-11-05.)
+            await self._settle_live()
             self.live_seg, self.live_text = self.last_final_id + 1, ""
         if not self.live_text:
             piece = piece.lstrip()
@@ -459,13 +483,20 @@ class Session:
             if not text or needs_translation(text):
                 await self._send_caption(seg, text, False, self.live_text.strip())
         elif seg in self.final_text:
-            # Tail of a finished utterance, until its text translation replaces it.
+            # Tail of a finished utterance (until its sentence translation replaces it, if any).
             await self._send_caption(seg, self.final_text[seg], True, self.live_text.strip())
 
     async def _start_live(self, replay_s: float = 0.0) -> None:
         self.live_until = time.monotonic() + LIVE_IDLE_S
-        if self.live is not None or self.live_factory is None:
+        if self.live is not None or self.live_factory is None or self.live_starting:
             return
+        self.live_starting = True
+        try:
+            await self._open_live(replay_s)
+        finally:
+            self.live_starting = False
+
+    async def _open_live(self, replay_s: float) -> None:
         started = time.monotonic()
         live = self.live_factory(on_korean=self._on_live_korean)
         try:
@@ -487,6 +518,7 @@ class Session:
 
     async def _stop_live(self) -> None:
         live, self.live = self.live, None
+        await self._settle_live()
         self.live_seg, self.live_text = None, ""
         if live is not None:
             await live.stop()

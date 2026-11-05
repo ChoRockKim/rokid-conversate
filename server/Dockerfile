@@ -15,6 +15,8 @@ RUN pip install -r requirements.txt
 # Bake the Whisper model into the image so a restart does not download ~500 MB again.
 ARG WHISPER_MODEL=small
 RUN python -c "from faster_whisper import WhisperModel; WhisperModel('${WHISPER_MODEL}', device='cpu', compute_type='int8')"
+# Language ID on the first partial (LanguageId, ~0.3 s).
+RUN python -c "from faster_whisper import WhisperModel; WhisperModel('base', device='cpu', compute_type='int8')"
 
 COPY conversate ./conversate
 
