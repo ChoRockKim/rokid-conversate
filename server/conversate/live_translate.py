@@ -45,18 +45,25 @@ class KoreanJoiner:
     Output deltas come a few characters at a time ("안", "그") and the model's phrase chunks are
     joined with no space between them: "써봤는데요제가 여러분에게사게 하든말리든" (production,
     2026-11-05). Inside a chunk the deltas arrive back to back; a new chunk comes after a pause,
-    so a pause between deltas is taken as a word boundary."""
+    so a pause between deltas is taken as a word boundary.
 
-    GAP_S = 0.35
+    Later sessions did send the spaces (" 실", "례", " 가까", "운"), and there a pause inside a
+    word ("근" ... 0.4 s ... "처") made "근 처". So once a delta carries a space, the stream's own
+    spacing is used and pauses are ignored."""
+
+    GAP_S = 0.5
 
     def __init__(self) -> None:
         self.last_at: float | None = None
         self.last_char = ""
+        self.spaced = False  # the stream sends its own spaces
 
     def add(self, delta: str, now: float) -> str:
         if not delta:
             return ""
-        gap = self.last_at is not None and now - self.last_at >= self.GAP_S
+        if not self.spaced and self.last_char and (delta[0].isspace() or delta[-1].isspace()):
+            self.spaced = True
+        gap = not self.spaced and self.last_at is not None and now - self.last_at >= self.GAP_S
         self.last_at = now
         piece = delta
         if gap and self.last_char and not self.last_char.isspace() and not delta[0].isspace() \

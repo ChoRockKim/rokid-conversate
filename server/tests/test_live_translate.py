@@ -15,9 +15,15 @@ def test_resample_length_and_shape():
 
 def test_joiner_restores_space_after_pause():
     j = KoreanJoiner()
-    pieces = [j.add("써봤", 0.0), j.add("는데요", 0.05), j.add("제가", 0.6), j.add(" 여러분", 0.65),
-              j.add("?", 1.5), j.add("네", 2.5)]
+    pieces = [j.add("써봤", 0.0), j.add("는데요", 0.05), j.add("제가", 0.6), j.add("여러분", 1.2),
+              j.add("?", 1.9), j.add("네", 2.5)]
     assert "".join(pieces) == "써봤는데요 제가 여러분? 네"
+
+
+def test_joiner_trusts_a_stream_that_sends_spaces():
+    j = KoreanJoiner()
+    pieces = [j.add("저", 0.0), j.add("는", 0.1), j.add(" 근", 0.2), j.add("처", 0.8), j.add("에서", 0.8)]
+    assert "".join(pieces) == "저는 근처에서"
 
 
 class FakeWs:
