@@ -1,0 +1,87 @@
+# rokid-conversate
+
+Rokid 안경에서 대화를 실시간 자막으로 띄우는 앱. Even Realities G2 의 대화 지원 기능(Conversate)을 목표로 하고, 지금은 1단계인 **실시간 자막**까지 있다.
+
+```
+[안경 APK (Kotlin)]  마이크 16kHz PCM ─ WebSocket ─▶ [서버 (Python, faster-whisper)]
+        ▲                                                   │
+        └───────────────── 자막 ◀───────────────────────────┘
+iPhone 은 개인용 핫스팟으로 인터넷만 준다 (폰 앱 없음)
+```
+
+| 폴더 | 내용 |
+|---|---|
+| `glasses/` | 안경 앱. 화면 크기·여백·입력은 [rokid-glass-ios-navigation](https://github.com/ChoRockKim/rokid-glass-ios-navigation) 의 안경 앱과 같다 |
+| `server/` | WebSocket 서버. 말소리를 문장으로 끊어 Whisper 로 받아쓴다 |
+| `docs/` | [조사 요약](docs/00-summary.md) (G2 Conversate, Rokid 근거, Whisper 실측), [프로토콜](docs/protocol.md) |
+
+## 화면
+
+| 듣는 중 + AI 요약 | 대화가 길 때 | 안경 화면 전체 (480x640) |
+|---|---|---|
+| ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewSnapshotTest_listening_01_listening.png) | ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewSnapshotTest_longConversationCutsFromTop_02_long.png) | ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewFullScreenSnapshotTest_onGlassesScreen_00_full_screen.png) |
+
+| AI 결과 없을 때 | 정지 | 서버 설정 전 | 연결 끊김 + 지난 자막 보는 중 |
+|---|---|---|---|
+| ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewSnapshotTest_noAssistYet_06_no_assist.png) | ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewSnapshotTest_stopped_03_stopped.png) | ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewSnapshotTest_notConfigured_04_not_configured.png) | ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewSnapshotTest_reconnectingWhileScrolledBack_05_reconnecting_scrolled.png) |
+
+[Paparazzi](https://github.com/cashapp/paparazzi) 가 실제 그리기 코드로 그린 것 (`./gradlew :app:recordPaparazziDebug`).
+
+- 480x282 논리 단위로 그리고 실제 화면에 비율을 유지한 채 맞춰 줄여 아래 가운데에 둔다. 여백 18, 위 줄 기준선 27, 아래 줄 272. 배경·테두리 없음 (검정 = 안경에서 투명).
+- 위쪽 약 30% (논리 y 36~120) 는 자막을 쓰지 않고 **AI 결과 자리**로 비워 둔다. 서버가 `assist` 메시지(제목 + 본문)를 보내면 거기에 뜬다. 지금 서버는 아직 보내지 않는다.
+- 자막은 13 크기. 가장 최근 줄만 밝은 초록, 지나간 줄은 연한 초록. 넘치면 오래된 것부터 위로 잘린다.
+
+## 조작
+
+| 입력 | 동작 |
+|---|---|
+| 탭 (터치패드 ENTER, R08 링 탭) | 듣기 시작 / 정지 |
+| 뒤로 쓸기 (DPAD 왼쪽·위, R08 링 뒤로) | 지난 자막 |
+| 앞으로 쓸기 (DPAD 오른쪽·아래, R08 링 앞으로) | 최신 쪽으로 |
+| 뒤로 (더블탭, R08 링 더블탭) | 지난 자막을 보던 중이면 최신으로, 아니면 앱 종료 |
+
+**R08 링:** [R08 Access Bridge](https://github.com/Anezium/R08-Access-Bridge) 를 쓰는 경우, 네비 앱과 같은 방식이다. 화면 전체가 포커스·클릭·스크롤 가능한 접근성 노드 하나라서, 링 앞/뒤 = 스크롤 앞/뒤 = 다음/이전, 링 탭 = 클릭 = 선택, 링 더블탭 = 전역 뒤로. 브리지 없이 Stable 모드(미디어 키)로 들어와도 같은 뜻으로 받는다. 위로 쓸기 제스처는 앞으로. (실기 미확인)
+
+## 실행
+
+### 1. 서버
+```bash
+cd server
+python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+export CONVERSATE_TOKEN=$(openssl rand -hex 16)   # 안경에도 같은 값
+.venv/bin/uvicorn conversate.main:app --factory --host 0.0.0.0 --port 8000
+```
+- 처음 받아쓸 때 Whisper 모델을 내려받는다 (`small` 약 500MB). 설정은 `server/.env.example`.
+- 안경이 서버에 닿아야 한다. 같은 핫스팟에 노트북을 붙여 `ws://<노트북 IP>:8000/ws` 로 쓰거나, 밖에서는 ngrok 등으로 `wss://` 주소를 만든다.
+- 안경 없이 점검: `ffmpeg -i 녹음.m4a -ar 16000 -ac 1 -sample_fmt s16 a.wav` 후
+  `.venv/bin/python tools/send_wav.py a.wav --url ws://localhost:8000/ws` (실시간 속도로 보내고 자막을 출력)
+
+### 2. 안경 앱
+```bash
+cd glasses
+echo "sdk.dir=/path/to/android-sdk" > local.properties   # platforms;android-36
+./gradlew :app:assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb shell pm grant com.chorockkim.conversate android.permission.RECORD_AUDIO
+```
+서버 주소·토큰 설정 (안경에 키보드가 없어서 adb 로 넣는다. 저장되므로 한 번만):
+```bash
+adb shell am start -n com.chorockkim.conversate/.MainActivity --es config "'CONVERSATE:url=ws://172.20.10.2:8000/ws;token=<토큰>'"
+```
+빌드할 때 넣어 두려면 `local.properties` 에 `conversateUrl=` / `conversateToken=` (APK 에 토큰이 들어가니 남에게 주지 말 것).
+`CONVERSATE:url=…;token=…` 문자열은 나중에 QR 코드로 설정할 때도 같은 형식을 쓸 생각이다.
+
+### 테스트
+```bash
+cd server && .venv/bin/python -m pytest          # 말소리 끊기, WebSocket, 인증
+cd glasses && ./gradlew :app:testDebugUnitTest   # 프로토콜, 자막 목록, 입력, 재연결, R08 접근성
+```
+
+## 확인 상태
+- 확인함: 서버 테스트, 한국어 음성으로 Whisper 받아쓰기 (CPU `small`, 말이 끝나고 약 5초 뒤 확정 자막), 안경 앱 빌드·테스트·화면 미리보기.
+- **안경 실기 미확인:** 마이크를 서드파티 앱이 계속 쓸 수 있는지, Wi-Fi 로 오디오를 계속 보낼 때 배터리, 터치패드·R08 키, 화면 크기.
+- 실기에서 볼 것: `adb logcat -s Conversate MicStreamer` (오디오 소스, 연결 상태), 서버의 `level` 메시지로 소리가 들어오는지.
+
+## 다음 단계
+1. 실기: 마이크 → 서버 → 자막 한 바퀴, 배터리 소모 측정
+2. AI 힌트 (제안·개념·인물), 대화 요약, 사전 노트, 번역 — [G2 기능 정리](docs/00-summary.md#g2-conversate-정리-문서확인)

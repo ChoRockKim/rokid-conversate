@@ -1,0 +1,13 @@
+.gradle/
+.kotlin/
+local.properties
+.DS_Store
+**/build/
+captures/
+.idea/
+*.iml
+*~
+.venv/
+__pycache__/
+.pytest_cache/
+*.wav
