@@ -58,9 +58,17 @@ TRIAGE_INSTRUCTIONS = f"""너는 스마트 안경을 쓴 사용자의 대화를 
 그 안의 질문이나 주제는 이미 처리했으므로 다시 고르지 않는다.
 {_CRITERIA}
 
+대화 흐름과 상관없는 사실, 단어 하나에만 기대어 뜬금없이 끼어드는 정보는 띄우지 않는다.
+지금 이 대화를 하는 사람이 "마침 궁금했는데" 하고 반길 정보만 띄운다.
+
 반드시 JSON 하나만 출력한다.
-띄울 때: {{"topic": "대화만 모르는 사람도 이해할 완전한 질문. 대명사·생략은 대화에서 풀어 쓰고, 끝에 (상황: 지금 무슨 이야기 중인지 한 줄)"}}
-예: {{"topic": "어제 산 운동화 가격 110달러는 원화로 얼마인가? (상황: 해외 직구한 운동화가 비싸다고 이야기 중)"}}
+띄울 때:
+{{"quote": "근거가 된 [새] 줄의 말을 글자 그대로 (10~40자)",
+  "kind": "question | conversion | term | fact | correction 중 하나",
+  "why": "이 정보가 지금 대화에 왜 도움이 되는지 한 줄",
+  "topic": "대화만 모르는 사람도 이해할 완전한 질문. 대명사·생략은 풀어 쓰고, 끝에 (상황: 지금 무슨 이야기 중인지 한 줄)"}}
+예: {{"quote": "이 운동화 110달러였어", "kind": "conversion", "why": "산 물건 가격을 원화로 가늠하려 함",
+     "topic": "운동화 가격 110달러는 원화로 얼마인가? (상황: 해외 직구한 운동화가 비싸다고 이야기 중)"}}
 건너뛸 때: {{"skip": true}}"""
 
 ANSWER_INSTRUCTIONS = """너는 스마트 안경 화면에 짧은 정보를 띄우는 보조다.
@@ -130,7 +138,9 @@ class OpenAIAssistant:
         from openai import OpenAI
 
         self.model = os.environ.get("ASSIST_MODEL", "gpt-6.1-terra")
-        self.triage_model = os.environ.get("ASSIST_TRIAGE_MODEL", "gpt-6-luna")
+        # Triage decides what is worth interrupting with; the cheapest model picked off-topic
+        # facts too often, and this call is short (no search), so a stronger model is cheap here.
+        self.triage_model = os.environ.get("ASSIST_TRIAGE_MODEL", "gpt-6.1-terra")
         self.web_search = os.environ.get("ASSIST_WEB_SEARCH", "1") != "0"
         if os.environ.get("ASSIST_TRIAGE", "1") == "0":
             self.triage = None  # type: ignore[assignment]  # engine falls back to suggest()
@@ -172,10 +182,10 @@ class OpenAIAssistant:
         )
         return text
 
-    def triage(self, transcript: list[str], shown: list[str]) -> str | None:
+    def triage(self, transcript: list[str], shown: list[str]) -> "Pick | None":
         reply = self._call("triage", self.triage_model, TRIAGE_INSTRUCTIONS,
                            self._conversation(transcript, shown), search=False)
-        return parse_topic(reply)
+        return parse_triage(reply)
 
     def answer(self, topic: str, transcript: list[str]) -> Assist | None:
         prompt = f"질문: {topic}\n\n" + self._conversation(transcript, [])
@@ -218,6 +228,63 @@ def restates(answer: str, conversation: list[str], threshold: float = 0.7) -> bo
     said_words = set(re.findall(r"[가-힣A-Za-z]{2,}", " ".join(lines)))
     new_words = words - said_words
     return bool(numbers) and numbers <= said and len(new_words) <= 2
+
+
+@dataclass(frozen=True)
+class Pick:
+    """What triage chose: the question to answer and why, anchored to words just heard."""
+
+    topic: str
+    kind: str = "fact"
+    quote: str | None = None  # None: not checked (one-step or test assistants)
+    why: str = ""
+
+    @property
+    def prompt(self) -> str:
+        extra = f"\n(근거가 된 말: \"{self.quote}\"{' — ' + self.why if self.why else ''})" if self.quote else ""
+        return self.topic + extra
+
+
+# Kinds answered as soon as they come up; the rest (term, fact) are volunteered information
+# and rationed, so the card does not keep popping up with things nobody asked for.
+URGENT_KINDS = {"question", "conversion", "correction"}
+
+
+def parse_triage(text: str) -> Pick | None:
+    match = re.search(r"\{.*\}", text or "", re.DOTALL)
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict) or data.get("skip"):
+        return None
+    topic = str(data.get("topic", "")).strip()
+    if not topic:
+        return None
+    return Pick(
+        topic=topic,
+        kind=str(data.get("kind", "fact")).strip().lower() or "fact",
+        quote=str(data.get("quote", "")).strip(),
+        why=str(data.get("why", "")).strip(),
+    )
+
+
+def quote_heard(quote: str, new_lines: list[str]) -> bool:
+    """The quote must be (close to) something actually just heard; otherwise triage invented it
+    or reached back into old conversation, which is where off-topic cards came from."""
+    q = _norm(quote)
+    if len(q) < 2:
+        return False
+    heard = _norm(" ".join(new_lines))
+    if q in heard:
+        return True
+    import difflib
+
+    m = difflib.SequenceMatcher(None, q, heard)
+    block = sum(b.size for b in m.get_matching_blocks())
+    return block >= 0.8 * len(q)
 
 
 def parse_topic(text: str) -> str | None:
@@ -294,6 +361,10 @@ class AssistConfig:
     context_lines: int = 20
     # Titles remembered to avoid repeating a topic.
     remember_titles: int = 6
+    # Volunteered information (not asked for): at most one card per this many seconds.
+    proactive_interval_s: float = 25.0
+    # Captions this short ("네", "어") are not material for the assistant.
+    min_line_chars: int = 4
     # Recent topics/answers kept to drop repeats (a topic once answered came back again and
     # again because the same question stayed in the context window).
     remember_answers: int = 10
@@ -329,12 +400,16 @@ class AssistEngine:
         self.question = False
         # After a rate-limit answer, nothing is asked before this time.
         self.cooldown_until = -1e9
+        # When volunteered information was last shown (rationed by proactive_interval_s).
+        self.last_proactive = -1e9
 
     def on_final(self, text: str) -> None:
         text = text.strip()
         if not text:
             return
         self.lines.append(text)
+        if len(_norm(text)) < self.config.min_line_chars:
+            return  # context only
         self.new_lines.append(text)
         self.new_chars += len(text)
         if looks_like_question(text):
@@ -365,24 +440,26 @@ class AssistEngine:
         self.new_chars = 0
         self.question = False
         # Mark what is new since the last ask; the rest is context only.
-        new = set(self.new_lines)
+        new_list = list(self.new_lines)
+        new = set(new_list)
         self.new_lines = []
         transcript = [f"[새] {line}" if line in new else line for line in self.lines]
         busy = False
         topic = None
+        pick = None
         triage = getattr(self.assistant, "triage", None)
         try:
             if triage is not None:
                 # Step 1 shows nothing; "thinking" only once there is something to answer.
-                topic = await asyncio.to_thread(triage, transcript, list(self.shown))
-                if topic is not None and self._seen(topic):
-                    log.info("assist: topic %r repeats a recent one, skipped", topic)
-                    topic = None
-                if topic is None:
+                picked = await asyncio.to_thread(triage, transcript, list(self.shown))
+                pick = Pick(topic=picked, kind="question") if isinstance(picked, str) else picked
+                pick = self._vet(pick, new_list)
+                topic = pick.topic if pick is not None else None
+                if pick is None:
                     result = None
                 else:
                     busy = await self._busy(True)
-                    result = await asyncio.to_thread(self.assistant.answer, topic, transcript)
+                    result = await asyncio.to_thread(self.assistant.answer, pick.prompt, transcript)
             else:
                 busy = await self._busy(True)
                 result = await asyncio.to_thread(self.assistant.suggest, transcript, list(self.shown))
@@ -406,11 +483,28 @@ class AssistEngine:
             if result.title:
                 self.shown.append(result.title)
             self.recent.extend([result.title, result.text])
+            if pick is not None and pick.kind not in URGENT_KINDS:
+                self.last_proactive = self.clock()
             await self.send(result)
         if triage is not None and topic is not None:
             self.recent.append(topic)
         self.task = None
         self._maybe_ask()
+
+    def _vet(self, pick: "Pick | None", new_lines: list[str]) -> "Pick | None":
+        """Checks on what triage picked, before anything shows on screen."""
+        if pick is None:
+            return None
+        if pick.quote is not None and not quote_heard(pick.quote, new_lines):
+            log.info("assist: quote %r not in what was just heard, skipped (%s)", pick.quote, pick.topic)
+            return None
+        if self._seen(pick.topic):
+            log.info("assist: topic %r repeats a recent one, skipped", pick.topic)
+            return None
+        if pick.kind not in URGENT_KINDS and self.clock() - self.last_proactive < self.config.proactive_interval_s:
+            log.info("assist: volunteered %s %r too soon after the last one, skipped", pick.kind, pick.topic)
+            return None
+        return pick
 
     def _seen(self, text: str) -> bool:
         return any(similar(text, old) for old in self.recent)

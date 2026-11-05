@@ -33,7 +33,7 @@ def test_waits_for_enough_new_speech():
         async def send(a):
             sent.append(a)
 
-        eng = AssistEngine(rec, send, AssistConfig(min_interval_s=0, min_new_chars=20))
+        eng = AssistEngine(rec, send, AssistConfig(min_line_chars=1, min_interval_s=0, min_new_chars=20))
         eng.on_final("짧은 말")
         await asyncio.sleep(0.05)
         assert rec.calls == []
@@ -54,7 +54,7 @@ def test_respects_interval_and_remembers_titles():
         async def send(a):
             sent.append(a)
 
-        eng = AssistEngine(rec, send, AssistConfig(min_interval_s=0.2, min_new_chars=1), clock=lambda: now[0])
+        eng = AssistEngine(rec, send, AssistConfig(min_line_chars=1, min_interval_s=0.2, min_new_chars=1), clock=lambda: now[0])
         eng.on_final("첫 문장")
         await asyncio.sleep(0.05)
         assert len(rec.calls) == 1
@@ -80,7 +80,7 @@ def test_skip_and_errors_send_nothing():
                 raise RuntimeError("api down")
 
         for assistant in (Recorder(result=None), Broken()):
-            eng = AssistEngine(assistant, send, AssistConfig(min_interval_s=0, min_new_chars=1))
+            eng = AssistEngine(assistant, send, AssistConfig(min_line_chars=1, min_interval_s=0, min_new_chars=1))
             eng.on_final("무언가")
             await asyncio.sleep(0.05)
         assert sent == []
@@ -114,7 +114,7 @@ def test_rate_limit_pushes_next_ask_out():
         async def send(a):
             pass
 
-        eng = AssistEngine(Limited(), send, AssistConfig(min_interval_s=15, min_new_chars=1), clock=lambda: now[0])
+        eng = AssistEngine(Limited(), send, AssistConfig(min_line_chars=1, min_interval_s=15, min_new_chars=1), clock=lambda: now[0])
         eng.on_final("첫 문장")
         await asyncio.sleep(0.05)
         assert Limited.calls == 1
@@ -151,7 +151,7 @@ def test_question_is_asked_at_once_even_when_short():
         async def send(a):
             sent.append(a)
 
-        eng = AssistEngine(rec, send, AssistConfig(min_interval_s=60, min_new_chars=40, question_interval_s=0))
+        eng = AssistEngine(rec, send, AssistConfig(min_line_chars=1, min_interval_s=60, min_new_chars=40, question_interval_s=0))
         eng.on_final("안녕")
         await asyncio.sleep(0.05)
         assert rec.calls == []
@@ -171,7 +171,7 @@ def test_question_jumps_a_scheduled_ask():
         async def send(a):
             pass
 
-        cfg = AssistConfig(min_interval_s=30, min_new_chars=1, question_interval_s=0)
+        cfg = AssistConfig(min_line_chars=1, min_interval_s=30, min_new_chars=1, question_interval_s=0)
         eng = AssistEngine(rec, send, cfg, clock=lambda: now[0])
         eng.on_final("첫 문장입니다")  # asked at once (never asked before)
         await asyncio.sleep(0.05)
@@ -196,7 +196,7 @@ def test_busy_is_reported_around_the_request():
         async def busy(b):
             events.append(("busy", b))
 
-        eng = AssistEngine(Recorder(), send, AssistConfig(min_interval_s=0, min_new_chars=1), on_busy=busy)
+        eng = AssistEngine(Recorder(), send, AssistConfig(min_line_chars=1, min_interval_s=0, min_new_chars=1), on_busy=busy)
         eng.on_final("무언가")
         await asyncio.sleep(0.05)
         assert events == [("busy", True), ("busy", False), ("assist", "주제")]
@@ -227,7 +227,7 @@ def test_two_step_skip_shows_nothing():
             events.append(("busy", b))
 
         a = TwoStep(None)
-        eng = AssistEngine(a, send, AssistConfig(min_interval_s=0, min_new_chars=1), on_busy=busy)
+        eng = AssistEngine(a, send, AssistConfig(min_line_chars=1, min_interval_s=0, min_new_chars=1), on_busy=busy)
         eng.on_final("안녕 잘 들려?")
         await asyncio.sleep(0.05)
         assert events == []  # no "thinking" flash for a skip
@@ -247,7 +247,7 @@ def test_two_step_answer_shows_thinking_then_result():
             events.append(("busy", b))
 
         a = TwoStep("방탄소년단 데뷔일은?")
-        eng = AssistEngine(a, send, AssistConfig(min_interval_s=0, min_new_chars=1), on_busy=busy)
+        eng = AssistEngine(a, send, AssistConfig(min_line_chars=1, min_interval_s=0, min_new_chars=1), on_busy=busy)
         eng.on_final("방탄소년단이 언제 데뷔했더라")
         await asyncio.sleep(0.05)
         assert events == [("busy", True), ("busy", False), ("assist", "BTS")]
@@ -291,7 +291,7 @@ def test_new_lines_are_marked_and_repeats_are_dropped():
         async def send(a):
             sent.append(a.title)
 
-        eng = AssistEngine(Same(), send, AssistConfig(min_interval_s=0, min_new_chars=1))
+        eng = AssistEngine(Same(), send, AssistConfig(min_line_chars=1, min_interval_s=0, min_new_chars=1))
         eng.on_final("방탄소년단이 언제 데뷔했더라")
         await asyncio.sleep(0.05)
         eng.on_final("아 그렇구나")
@@ -311,3 +311,95 @@ def test_restates_detects_answers_that_add_nothing():
     assert restates("신발 110달러", convo)  # only numbers already said
     assert not restates("110달러는 약 15만 원이다(1달러 약 1,380원).", convo)  # adds the conversion
     assert not restates("방탄소년단은 2013년 6월 13일 데뷔했다.", ["방탄소년단 언제 데뷔했더라"])
+
+
+def test_parse_triage_and_quote_check():
+    from conversate.assist import Pick, parse_triage, quote_heard
+
+    p = parse_triage('{"quote": "이 운동화 110달러였어", "kind": "conversion", "why": "가격 가늠", "topic": "110달러는 원화로?"}')
+    assert p == Pick(topic="110달러는 원화로?", kind="conversion", quote="이 운동화 110달러였어", why="가격 가늠")
+    assert parse_triage('{"skip": true}') is None
+    heard = ["어제 산 이 운동화 110달러였어. 생각보다 좀 비싸더라."]
+    assert quote_heard("이 운동화 110달러였어", heard)
+    assert quote_heard("이 운동화 110 달러 였어", heard)  # spacing differences are fine
+    assert not quote_heard("방탄소년단 데뷔", heard)  # not something just heard
+
+
+class Picker:
+    def __init__(self, picks):
+        self.picks, self.answered = list(picks), []
+
+    def triage(self, transcript, shown):
+        return self.picks.pop(0) if self.picks else None
+
+    def answer(self, topic, transcript):
+        self.answered.append(topic)
+        facts = ["근전도는 근육의 전기 신호를 재는 기술이다.", "약 110만 원이다.", "2025년 9월 출시됐다."]
+        titles = ["근전도", "원화 환산", "출시일"]
+        n = len(self.answered) - 1
+        return Assist(titles[n % 3], facts[n % 3])
+
+
+def test_invented_quote_is_rejected_before_anything_shows():
+    from conversate.assist import Pick
+
+    async def main():
+        events = []
+
+        async def send(a):
+            events.append("assist")
+
+        async def busy(b):
+            events.append(("busy", b))
+
+        a = Picker([Pick(topic="BTS 데뷔일은?", kind="fact", quote="방탄소년단 데뷔")])
+        eng = AssistEngine(a, send, AssistConfig(min_interval_s=0, min_new_chars=1), on_busy=busy)
+        eng.on_final("오늘 점심 뭐 먹을까 고민이네")
+        await asyncio.sleep(0.05)
+        assert events == [] and a.answered == []
+
+    run(main())
+
+
+def test_volunteered_facts_are_rationed_but_questions_are_not():
+    from conversate.assist import Pick
+
+    async def main():
+        now = [0.0]
+        sent = []
+
+        async def send(a):
+            sent.append(a.title)
+
+        a = Picker([
+            Pick(topic="EMG란?", kind="term", quote="근전도 방식이래"),
+            Pick(topic="뉴럴 밴드 가격?", kind="fact", quote="뉴럴 밴드도 있대"),
+            Pick(topic="800달러는 원화로?", kind="conversion", quote="800달러래"),
+        ])
+        cfg = AssistConfig(min_interval_s=0, min_new_chars=1, question_interval_s=0, proactive_interval_s=25)
+        eng = AssistEngine(a, send, cfg, clock=lambda: now[0])
+        for line in ["손가락은 근전도 방식이래", "손목에 차는 뉴럴 밴드도 있대", "가격은 800달러래"]:
+            now[0] += 3
+            eng.on_final(line)
+            await asyncio.sleep(0.05)
+        # term shown, the next volunteered fact 3 s later rationed, the conversion still shown
+        assert a.answered == ["EMG란?\n(근거가 된 말: \"근전도 방식이래\")", "800달러는 원화로?\n(근거가 된 말: \"800달러래\")"]
+        assert len(sent) == 2
+
+    run(main())
+
+
+def test_very_short_captions_are_not_material():
+    async def main():
+        rec = Recorder()
+
+        async def send(a):
+            pass
+
+        eng = AssistEngine(rec, send, AssistConfig(min_interval_s=0, min_new_chars=1))
+        eng.on_final("네")
+        eng.on_final("어")
+        await asyncio.sleep(0.05)
+        assert rec.calls == []
+
+    run(main())
