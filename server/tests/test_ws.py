@@ -262,3 +262,37 @@ def test_foreign_partial_opens_live_early_and_replays_audio():
         ws.send_bytes(silence(300) + tone(2500))
         read_until(ws, lambda m: m["type"] == "caption" and not m["final"])
     assert opened == []
+
+
+def test_live_pieces_before_first_partial_go_to_the_next_utterance():
+    """Translation of a new utterance can arrive before its first partial. Once the previous
+    utterance has its sentence translation, those pieces start the next caption."""
+    import asyncio
+    from conversate.main import Session
+
+    class Ws:
+        def __init__(self):
+            self.sent = []
+
+        async def send_text(self, t):
+            self.sent.append(json.loads(t))
+
+    class Stt:
+        def transcribe(self, audio, *, partial):
+            return ""
+
+    async def main():
+        ws = Ws()
+        s = Session(ws, Stt())
+        s.live = object()  # only "is not None" matters here
+        s.last_final_id = 1
+        s.live_seg, s.live_text = 1, "실례합니다."
+        await s._on_live_korean("좋은 식당을")  # #1 already translated (not in final_text)
+        assert (s.live_seg, s.live_text) == (2, "좋은 식당을")
+        s._live_claim(2)
+        assert s.live_text == "좋은 식당을"
+        await s._on_live_korean(" 찾고")
+        s.partial_text[2] = "I am looking for a good restaurant"
+        assert s._live_for(2, s.partial_text[2]) == "좋은 식당을 찾고"
+
+    asyncio.run(main())

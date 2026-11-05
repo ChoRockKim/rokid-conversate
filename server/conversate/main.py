@@ -419,7 +419,9 @@ class Session:
         """A new utterance started: live Korean from now on belongs to it. Pieces arriving after
         the previous utterance's final (the translation lags speech) went to that one."""
         if self.live_seg is None or self.live_seg < seg:
-            self.live_seg, self.live_text = seg, ""
+            # Pieces held for an utterance that had no partial yet carry over to this one.
+            held = self.live_seg is not None and self.live_seg > self.last_final_id
+            self.live_seg, self.live_text = seg, (self.live_text if held else "")
 
     def _live_for(self, seg: int, text: str) -> str | None:
         if self.live_seg != seg or not self.live_text.strip():
@@ -430,9 +432,14 @@ class Session:
 
     async def _on_live_korean(self, piece: str) -> None:
         self.live_until = time.monotonic() + LIVE_IDLE_S
-        if self.live_seg is None:
-            # Translation before any partial of the utterance: hold it for the next segment.
-            self.live_seg = self.last_final_id + 1
+        finished = self.live_seg is not None and self.live_seg <= self.last_final_id
+        if self.live_seg is None or (finished and (
+                self.live_seg not in self.final_text or self.segmenter._state.in_speech)):
+            # Translation before the utterance's first partial (language detection makes that
+            # ~1 s late): it belongs to the next utterance, not the finished one. A finished
+            # one only takes "tail" pieces until its sentence translation arrives, and not
+            # once someone is talking again. (Its start was dropped, 2026-11-05.)
+            self.live_seg, self.live_text = self.last_final_id + 1, ""
         if not self.live_text:
             piece = piece.lstrip()
         self.live_text += piece
