@@ -20,7 +20,7 @@ import urllib.request
 log = logging.getLogger(__name__)
 
 UA = "rokid-conversate/0.1 (https://github.com/ChoRockKim/rokid-conversate)"
-MAX_PX = 96
+MAX_PX = 160
 LANGS = ("ko", "en")
 
 

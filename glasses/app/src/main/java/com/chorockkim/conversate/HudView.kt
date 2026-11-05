@@ -358,8 +358,8 @@ class HudView(context: Context) : View(context) {
      */
     private fun drawAssist(canvas: Canvas, assist: Assist?, busy: Boolean) {
         if (assist == null && !busy) return
-        val left = (W - MODAL_WIDTH) / 2
-        val right = left + MODAL_WIDTH
+        var left = (W - MODAL_WIDTH) / 2
+        var right = left + MODAL_WIDTH
         val inner = MODAL_WIDTH - 2 * MODAL_PAD
         val dots = ".".repeat(1 + ((clock() / 400) % 3).toInt())
         val thinking = "생각 중$dots"
@@ -378,25 +378,30 @@ class HudView(context: Context) : View(context) {
         val title = assist.title
         val titleH = if (title.isNotEmpty() || busy) 19f else 0f
         val image = assist.image
-        // Picture: at most IMAGE_SIZE square, aspect kept, at the right; text wraps beside it.
+        // Picture: on its own at the right, as tall as the AI area (it was too small inside the
+        // card); the card moves left to make room.
         val imageW: Float
         val imageH: Float
         if (image != null && image.width > 0 && image.height > 0) {
-            val scale = minOf(IMAGE_SIZE / image.width, IMAGE_SIZE / image.height)
+            val scale = minOf(IMAGE_MAX_W / image.width, (ASSIST_BOTTOM - ASSIST_TOP) / image.height)
             imageW = image.width * scale
             imageH = image.height * scale
         } else {
             imageW = 0f
             imageH = 0f
         }
-        val textW = if (imageW > 0f) inner - imageW - IMAGE_GAP else inner
+        if (imageW > 0f) {
+            left = MARGIN
+            right = W - MARGIN - imageW - IMAGE_GAP
+        }
+        val textW = right - left - 2 * MODAL_PAD
         val maxBodyLines = ((ASSIST_BOTTOM - ASSIST_TOP - 2 * MODAL_PAD - titleH) / 16f).toInt().coerceAtLeast(1)
         val body = StaticLayout.Builder.obtain(assist.text, 0, assist.text.length, assistBody, textW.toInt())
             .setLineSpacing(0f, 1.1f)
             .setMaxLines(maxBodyLines)
             .setEllipsize(TextUtils.TruncateAt.END)
             .build()
-        val content = maxOf(titleH + body.height, imageH)
+        val content = titleH + body.height
         val bottom = (ASSIST_TOP + 2 * MODAL_PAD + content).coerceAtMost(ASSIST_BOTTOM)
         modalRect.set(left, ASSIST_TOP, right, bottom)
         canvas.drawRoundRect(modalRect, MODAL_RADIUS, MODAL_RADIUS, modalFill)
@@ -405,10 +410,6 @@ class HudView(context: Context) : View(context) {
         canvas.save()
         canvas.clipRect(modalRect)
         var y = ASSIST_TOP + MODAL_PAD
-        if (image != null && imageW > 0f) {
-            imageRect.set(right - MODAL_PAD - imageW, y, right - MODAL_PAD, y + imageH)
-            canvas.drawBitmap(image, null, imageRect, imagePaint)
-        }
         if (titleH > 0f) {
             val busyW = if (busy) assistBusy.measureText("생각 중...") + 8f else 0f
             val t = TextUtils.ellipsize("✦ $title", assistTitle, textW - busyW, TextUtils.TruncateAt.END)
@@ -419,6 +420,11 @@ class HudView(context: Context) : View(context) {
         canvas.translate(left + MODAL_PAD, y)
         body.draw(canvas)
         canvas.restore()
+        if (image != null && imageW > 0f) {
+            val x = W - MARGIN - imageW
+            imageRect.set(x, ASSIST_TOP, x + imageW, ASSIST_TOP + imageH)
+            canvas.drawBitmap(image, null, imageRect, imagePaint)
+        }
         if (busy) postInvalidateDelayed(400)
     }
 
@@ -454,8 +460,8 @@ class HudView(context: Context) : View(context) {
         const val CARD_SLIDE = 8f
         /** AI card: 70% of the width, centred. */
         const val MODAL_WIDTH = W * 0.7f
-        /** AI card picture: "a little small", fits beside 3-4 lines of text. */
-        const val IMAGE_SIZE = 56f
+        /** AI card picture, outside the card at the right: AI-area tall, at most this wide. */
+        const val IMAGE_MAX_W = 120f
         const val IMAGE_GAP = 8f
         const val MODAL_PAD = 8f
         const val MODAL_RADIUS = 6f

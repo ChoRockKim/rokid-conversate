@@ -26,7 +26,7 @@ WebSocket 하나로 오간다. 주소는 `ws://<서버>:8000/ws` (외부에서�
 | `{"type":"error","message":"..."}` | 오류. 연결은 유지 |
 | `{"type":"assist_status","busy":true}` | AI 요청 시작(true)/끝(false). 안경은 그동안 `생각 중…` |
 | `{"type":"assist","title":"...","text":"..."}` | 화면 위쪽 30% 의 AI 결과 (용어 설명, 검색 답, 인물·회사 배경). `text` 가 비면 지움. 서버에 `OPENAI_API_KEY` 가 있을 때만 |
-| `{"type":"assist_image","title":"...","png":"<base64>"}` | 방금 보낸 카드(같은 `title`)의 그림. 사람·장소·동물·음식·제품처럼 보면 아는 대상일 때 위키백과 썸네일을 최대 96px 흑백 PNG 로 (`images.py`, `IMAGES=0` 으로 끔). 안경은 카드 왼쪽에 작게 초록으로 |
+| `{"type":"assist_image","title":"...","png":"<base64>"}` | 방금 보낸 카드(같은 `title`)의 그림. 사람·장소·동물·음식·제품처럼 보면 아는 대상일 때 위키백과 썸네일을 최대 160px 흑백 PNG 로 (`images.py`, `IMAGES=0` 으로 끔). 안경은 카드 오른쪽 바깥에 AI 영역 높이로 초록으로 |
 
 ## 서버 안에서 일어나는 일
 1. 30 ms 단위로 소리 크기(RMS)를 재서, 배경 소음의 3배이면서 300 이상이면 "말하는 중"으로 본다 (`segmenter.py`).
