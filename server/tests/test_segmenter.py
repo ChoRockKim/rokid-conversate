@@ -1,6 +1,13 @@
 import numpy as np
 
-from conversate.segmenter import SAMPLE_RATE, Segmenter, SegmenterConfig
+from conversate.segmenter import SAMPLE_RATE, Segmenter, SegmenterConfig as _Config
+
+
+def SegmenterConfig(**kw):
+    # Synthetic tones are not speech to WebRTC VAD; these tests exercise the segmenting logic
+    # with the energy detector.
+    kw.setdefault("use_webrtc", False)
+    return _Config(**kw)
 
 
 def tone(ms: int, amplitude: int = 8000) -> bytes:
@@ -33,7 +40,7 @@ def test_one_utterance_gives_one_final():
 
 
 def test_silence_only_gives_nothing():
-    seg = Segmenter()
+    seg = Segmenter(SegmenterConfig())
     assert feed_all(seg, silence(5000)) == []
     assert seg.flush() == []
 
@@ -83,3 +90,21 @@ def test_odd_byte_chunks_are_handled():
     whole = Segmenter(SegmenterConfig(partial_every_ms=0))
     expected = [e for e in feed_all(whole, data) if e.kind == "final"][0].audio
     np.testing.assert_array_equal(finals[0].audio, expected)
+
+
+def test_normalize_raises_quiet_audio_with_a_cap():
+    from conversate.transcriber import normalize
+
+    quiet = np.array([0.0, 0.01, -0.02], dtype=np.float32)
+    out = normalize(quiet)
+    assert abs(float(np.max(np.abs(out))) - 0.4) < 1e-6  # 20x cap: 0.02 -> 0.4
+    loud = np.array([0.5, -0.95], dtype=np.float32)
+    assert np.array_equal(normalize(loud), loud)  # already loud: untouched
+    assert np.array_equal(normalize(np.zeros(3, dtype=np.float32)), np.zeros(3, dtype=np.float32))
+
+
+def test_webrtc_vad_ignores_steady_tone_and_hiss():
+    # Real speech is checked by hand with recordings; here: no false speech on non-speech.
+    seg = Segmenter(_Config())
+    assert seg.feed(silence(2000, amplitude=40)) == []
+    assert seg.flush() == []

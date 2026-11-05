@@ -1,6 +1,7 @@
 fastapi>=0.115
 uvicorn[standard]>=0.30
 numpy>=2.0
+webrtcvad-wheels>=2.0  # speech detection (segmenter)
 faster-whisper>=1.1
 openai>=2.0  # AI panel (assist)
 websockets>=13  # tools/send_wav.py

@@ -51,6 +51,7 @@ class FasterWhisperTranscriber:
 
     def transcribe(self, audio: np.ndarray, *, partial: bool) -> str:
         model = self._get_model()
+        audio = normalize(audio)
         with self._run_lock:
             segments, _info = model.transcribe(
                 audio,
@@ -63,3 +64,13 @@ class FasterWhisperTranscriber:
                 condition_on_previous_text=False,
             )
             return " ".join(s.text.strip() for s in segments).strip()
+
+
+def normalize(audio: np.ndarray, peak: float = 0.9, max_gain: float = 20.0) -> np.ndarray:
+    """Raise a quiet utterance so its peak sits near [peak] (gain capped at [max_gain]).
+    The glasses deliver speech far below full scale; Whisper does better on a normal level."""
+    top = float(np.max(np.abs(audio))) if audio.size else 0.0
+    if top <= 0.0:
+        return audio
+    gain = min(max_gain, peak / top)
+    return (audio * gain).astype(np.float32) if gain > 1.0 else audio

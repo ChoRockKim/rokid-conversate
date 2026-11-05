@@ -1,12 +1,15 @@
-"""Cut a 16 kHz mono PCM stream into speech segments with a simple energy VAD.
+"""Cut a 16 kHz mono PCM stream into speech segments.
 
 Whisper works on whole utterances, not on a live stream, so the server collects audio while
 someone is speaking and hands each finished utterance to the transcriber. While the utterance
 is still going, it can also ask for a "partial" transcript of what it has so far, so captions
 appear before the speaker stops.
 
-The VAD is deliberately simple (RMS against an adaptive noise floor). It is easy to reason
-about and needs no extra model; swap it for Silero or webrtcvad if it turns out too noisy.
+Speech detection uses WebRTC VAD (shape of the signal, not its loudness) plus a small absolute
+level floor. The first version used only loudness against an adaptive noise floor with a fixed
+minimum of 300; on the glasses (2026-11-05) speech mostly arrived at RMS 100-400, so most of it
+was missed, and missed speech was then learnt as "noise", raising the bar further. The energy
+mode is kept for tests and as a fallback (use_webrtc=False).
 """
 
 from __future__ import annotations
@@ -22,9 +25,14 @@ FRAME_SAMPLES = SAMPLE_RATE * FRAME_MS // 1000  # 480 samples
 
 @dataclass
 class SegmenterConfig:
-    # A frame counts as speech when its RMS is this many times above the noise floor ...
+    # WebRTC VAD decides what is speech (aggressiveness 0..3, higher = stricter) ...
+    use_webrtc: bool = True
+    vad_mode: int = 2
+    # ... as long as the frame is at least this loud (int16 RMS), so hiss stays silence.
+    webrtc_min_rms: float = 30.0
+    # Energy mode (use_webrtc=False): RMS this many times above the noise floor ...
     speech_ratio: float = 3.0
-    # ... and above this absolute level (int16 scale), so silence in a quiet room stays silence.
+    # ... and above this absolute level.
     min_speech_rms: float = 300.0
     # End the utterance after this much continuous non-speech.
     end_silence_ms: int = 700
@@ -64,6 +72,11 @@ class Segmenter:
         self._noise_floor = self.config.min_speech_rms / self.config.speech_ratio
         self._next_id = 1
         self.last_rms = 0.0
+        self._vad = None
+        if self.config.use_webrtc:
+            import webrtcvad
+
+            self._vad = webrtcvad.Vad(self.config.vad_mode)
 
     @staticmethod
     def _frames(ms: int) -> int:
@@ -96,7 +109,12 @@ class Segmenter:
         st = self._state
         rms = float(np.sqrt(np.mean(frame.astype(np.float32) ** 2)))
         self.last_rms = rms
-        is_speech = rms >= cfg.min_speech_rms and rms >= self._noise_floor * cfg.speech_ratio
+        if self._vad is not None:
+            is_speech = rms >= cfg.webrtc_min_rms and self._vad.is_speech(
+                frame.astype("<i2").tobytes(), SAMPLE_RATE
+            )
+        else:
+            is_speech = rms >= cfg.min_speech_rms and rms >= self._noise_floor * cfg.speech_ratio
 
         if not st.in_speech:
             # Track the background level only while nobody is talking.

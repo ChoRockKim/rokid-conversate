@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from conversate.main import create_app
+from conversate.segmenter import SegmenterConfig
 from tests.test_segmenter import silence, tone
 
 
@@ -22,7 +23,13 @@ AUTH = {"Authorization": "Bearer secret"}
 
 
 def client(stt=None, assistant=None):
-    return TestClient(create_app(transcriber=stt or FakeTranscriber(), token="secret", assistant=assistant))
+    return TestClient(
+        create_app(
+            transcriber=stt or FakeTranscriber(), token="secret", assistant=assistant,
+            # synthetic tones: energy detector (WebRTC VAD is checked with real speech separately)
+            segmenter_config=SegmenterConfig(use_webrtc=False),
+        )
+    )
 
 
 def read_until(ws, predicate, limit=200):

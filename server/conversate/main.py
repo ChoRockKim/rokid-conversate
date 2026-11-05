@@ -28,7 +28,7 @@ from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
 
 from .assist import Assist, AssistEngine, Assistant, assistant_from_env
 from .ota import ota_router_from_env
-from .segmenter import SAMPLE_RATE, Event, Segmenter
+from .segmenter import SAMPLE_RATE, Event, Segmenter, SegmenterConfig
 from .transcriber import FasterWhisperTranscriber, Transcriber
 
 log = logging.getLogger("conversate")
@@ -45,6 +45,7 @@ def create_app(
     token: str | None = None,
     assistant: Assistant | None | object = _FROM_ENV,
     ota: APIRouter | None = None,
+    segmenter_config: SegmenterConfig | None = None,
 ) -> FastAPI:
     app = FastAPI(title="rokid-conversate")
     stt = transcriber or FasterWhisperTranscriber()
@@ -66,7 +67,7 @@ def create_app(
             return
         await websocket.accept()
         log.info("glasses connected from %s", websocket.client)
-        await Session(websocket, stt, ai).run()
+        await Session(websocket, stt, ai, segmenter_config).run()
         log.info("glasses disconnected")
 
     return app
@@ -81,13 +82,19 @@ def _authorized(websocket: WebSocket, expected: str) -> bool:
 class Session:
     """One glasses connection: audio in, captions out."""
 
-    def __init__(self, websocket: WebSocket, stt: Transcriber, ai: Assistant | None = None) -> None:
+    def __init__(
+        self,
+        websocket: WebSocket,
+        stt: Transcriber,
+        ai: Assistant | None = None,
+        segmenter_config: SegmenterConfig | None = None,
+    ) -> None:
         self.ws = websocket
         self.stt = stt
         self.assist = (
             AssistEngine(ai, self._send_assist, on_busy=self._send_assist_busy) if ai is not None else None
         )
-        self.segmenter = Segmenter()
+        self.segmenter = Segmenter(segmenter_config)
         self.finals: deque[Event] = deque()
         self.partial: Event | None = None
         self.last_final_id = 0
