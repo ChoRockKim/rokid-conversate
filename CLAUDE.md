@@ -9,7 +9,7 @@ Rokid 안경에서 대화를 실시간 자막으로 띄운다 (Even Realities G2
 
 ## 구성
 - `glasses/` Kotlin 안경 앱. 화면·입력은 `ChoRockKim/rokid-glass-ios-navigation` 의 `glasses-android` (브랜치 `feat/route-server`) 를 따른다: 480x282 논리 단위를 비율 유지해 화면 아래 가운데에, 여백 18, 색 `#00ff66`/`#4da86c`, R08 링은 HudView 하나를 접근성 노드로.
-- `server/` Python (FastAPI + faster-whisper). 네비 서버는 TypeScript 지만 이 프로젝트는 사용자가 Python 으로 정했다.
+- `server/` Python (FastAPI + faster-whisper, AI 결과는 OpenAI Responses API). 네비 서버는 TypeScript 지만 이 프로젝트는 사용자가 Python 으로 정했다.
 
 ## 작업 규칙
 - 사실을 쓸 때 **직접 실행한 것**과 **문서·소스만 읽은 것**을 구분한다. 안경 실기·iPhone 핫스팟은 클라우드에서 못 하므로 "실기 미확인"으로 표시한다.

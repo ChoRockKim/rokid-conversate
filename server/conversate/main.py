@@ -7,6 +7,7 @@ Protocol (see docs/protocol.md):
   server -> glasses  {"type":"ready"}
                      {"type":"level","rms":123.4,"speech":false,"received_ms":5000}
                      {"type":"caption","id":3,"text":"...","final":false}
+                     {"type":"assist","title":"...","text":"..."}   AI panel (needs OPENAI_API_KEY)
                      {"type":"error","message":"..."}
 """
 
@@ -22,6 +23,7 @@ from collections import deque
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
+from .assist import Assist, AssistEngine, Assistant, assistant_from_env
 from .segmenter import SAMPLE_RATE, Event, Segmenter
 from .transcriber import FasterWhisperTranscriber, Transcriber
 
@@ -30,9 +32,17 @@ log = logging.getLogger("conversate")
 LEVEL_INTERVAL_S = 0.25
 
 
-def create_app(transcriber: Transcriber | None = None, token: str | None = None) -> FastAPI:
+_FROM_ENV = object()
+
+
+def create_app(
+    transcriber: Transcriber | None = None,
+    token: str | None = None,
+    assistant: Assistant | None | object = _FROM_ENV,
+) -> FastAPI:
     app = FastAPI(title="rokid-conversate")
     stt = transcriber or FasterWhisperTranscriber()
+    ai = assistant_from_env() if assistant is _FROM_ENV else assistant
     expected = token if token is not None else os.environ.get("CONVERSATE_TOKEN", "")
 
     @app.get("/health")
@@ -45,7 +55,7 @@ def create_app(transcriber: Transcriber | None = None, token: str | None = None)
             await websocket.close(code=1008)
             return
         await websocket.accept()
-        await Session(websocket, stt).run()
+        await Session(websocket, stt, ai).run()
 
     return app
 
@@ -59,9 +69,10 @@ def _authorized(websocket: WebSocket, expected: str) -> bool:
 class Session:
     """One glasses connection: audio in, captions out."""
 
-    def __init__(self, websocket: WebSocket, stt: Transcriber) -> None:
+    def __init__(self, websocket: WebSocket, stt: Transcriber, ai: Assistant | None = None) -> None:
         self.ws = websocket
         self.stt = stt
+        self.assist = AssistEngine(ai, self._send_assist) if ai is not None else None
         self.segmenter = Segmenter()
         self.finals: deque[Event] = deque()
         self.partial: Event | None = None
@@ -74,6 +85,9 @@ class Session:
         async with self.send_lock:
             await self.ws.send_text(json.dumps(message, ensure_ascii=False))
 
+    async def _send_assist(self, result: Assist) -> None:
+        await self.send({"type": "assist", "title": result.title, "text": result.text})
+
     async def run(self) -> None:
         worker = asyncio.create_task(self._transcribe_loop())
         try:
@@ -82,6 +96,8 @@ class Session:
             pass
         finally:
             worker.cancel()
+            if self.assist is not None:
+                self.assist.close()
 
     async def _receive_loop(self) -> None:
         last_level = 0.0
@@ -167,6 +183,8 @@ class Session:
                     await self.send(
                         {"type": "caption", "id": event.segment_id, "text": text, "final": final}
                     )
+                if final and text and self.assist is not None:
+                    self.assist.on_final(text)
 
 
 def app() -> FastAPI:

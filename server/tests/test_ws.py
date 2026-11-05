@@ -21,8 +21,8 @@ class FakeTranscriber:
 AUTH = {"Authorization": "Bearer secret"}
 
 
-def client(stt=None):
-    return TestClient(create_app(transcriber=stt or FakeTranscriber(), token="secret"))
+def client(stt=None, assistant=None):
+    return TestClient(create_app(transcriber=stt or FakeTranscriber(), token="secret", assistant=assistant))
 
 
 def read_until(ws, predicate, limit=200):
@@ -98,3 +98,25 @@ def test_transcriber_failure_keeps_session():
         assert "boom" in err["message"]
         ws.send_text(json.dumps({"type": "hello"}))
         assert read_until(ws, lambda m: m["type"] == "ready")
+
+
+def test_assist_message_after_enough_speech():
+    from conversate.assist import Assist
+
+    class FakeAssistant:
+        def suggest(self, transcript, shown):
+            return Assist("요약", f"{len(transcript)}줄")
+
+    class Wordy:
+        def transcribe(self, audio, *, partial):
+            return "검색 광고 예산을 줄이는 방안을 논의합니다"  # 22 chars
+
+    with client(stt=Wordy(), assistant=FakeAssistant()).websocket_connect("/ws", headers=AUTH) as ws:
+        ws.send_text(json.dumps({"type": "hello"}))
+        ws.receive_text()
+        # Two utterances pass the 40-char bar that triggers an ask.
+        for _ in range(2):
+            ws.send_bytes(silence(300) + tone(600) + silence(900))
+        msg = read_until(ws, lambda m: m["type"] == "assist")
+        assert msg["title"] == "요약"
+        assert msg["text"].endswith("줄")

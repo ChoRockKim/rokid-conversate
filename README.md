@@ -28,7 +28,7 @@ iPhone 은 개인용 핫스팟으로 인터넷만 준다 (폰 앱 없음)
 [Paparazzi](https://github.com/cashapp/paparazzi) 가 실제 그리기 코드로 그린 것 (`./gradlew :app:recordPaparazziDebug`).
 
 - 480x282 논리 단위로 그리고 실제 화면에 비율을 유지한 채 맞춰 줄여 아래 가운데에 둔다. 여백 18, 위 줄 기준선 27, 아래 줄 272. 배경·테두리 없음 (검정 = 안경에서 투명).
-- 위쪽 약 30% (논리 y 36~120) 는 자막을 쓰지 않고 **AI 결과 자리**로 비워 둔다. 서버가 `assist` 메시지(제목 + 본문)를 보내면 거기에 뜬다. 지금 서버는 아직 보내지 않는다.
+- 위쪽 약 30% (논리 y 36~120) 는 자막을 쓰지 않고 **AI 결과 자리**로 둔다. 서버가 대화를 OpenAI 에 보내 용어 설명·검색 답·인물/회사 배경 중 도움이 될 것 하나를 받아 띄운다 (`OPENAI_API_KEY` 가 있을 때만, 15초에 한 번까지).
 - 자막은 13 크기. 가장 최근 줄만 밝은 초록, 지나간 줄은 연한 초록. 넘치면 오래된 것부터 위로 잘린다.
 
 ## 조작
@@ -49,9 +49,11 @@ iPhone 은 개인용 핫스팟으로 인터넷만 준다 (폰 앱 없음)
 cd server
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 export CONVERSATE_TOKEN=$(openssl rand -hex 16)   # 안경에도 같은 값
+export OPENAI_API_KEY=sk-...                       # 위쪽 AI 결과용 (없으면 자막만)
 .venv/bin/uvicorn conversate.main:app --factory --host 0.0.0.0 --port 8000
 ```
 - 처음 받아쓸 때 Whisper 모델을 내려받는다 (`small` 약 500MB). 설정은 `server/.env.example`.
+- AI 결과 모델은 `ASSIST_MODEL` (기본 `gpt-6.1-terra`, 더 싸게 `gpt-6-luna`), 웹 검색은 `ASSIST_WEB_SEARCH=0` 으로 끔.
 - 안경이 서버에 닿아야 한다. 같은 핫스팟에 노트북을 붙여 `ws://<노트북 IP>:8000/ws` 로 쓰거나, 밖에서는 ngrok 등으로 `wss://` 주소를 만든다.
 - 안경 없이 점검: `ffmpeg -i 녹음.m4a -ar 16000 -ac 1 -sample_fmt s16 a.wav` 후
   `.venv/bin/python tools/send_wav.py a.wav --url ws://localhost:8000/ws` (실시간 속도로 보내고 자막을 출력)
@@ -78,10 +80,12 @@ cd glasses && ./gradlew :app:testDebugUnitTest   # 프로토콜, 자막 목록, 
 ```
 
 ## 확인 상태
+- AI 결과: 가짜 모델로 흐름 테스트, OpenAI 호출은 잘못된 키로 401 까지만 확인 (실제 응답 품질·지연은 미확인).
 - 확인함: 서버 테스트, 한국어 음성으로 Whisper 받아쓰기 (CPU `small`, 말이 끝나고 약 5초 뒤 확정 자막), 안경 앱 빌드·테스트·화면 미리보기.
 - **안경 실기 미확인:** 마이크를 서드파티 앱이 계속 쓸 수 있는지, Wi-Fi 로 오디오를 계속 보낼 때 배터리, 터치패드·R08 키, 화면 크기.
 - 실기에서 볼 것: `adb logcat -s Conversate MicStreamer` (오디오 소스, 연결 상태), 서버의 `level` 메시지로 소리가 들어오는지.
 
 ## 다음 단계
 1. 실기: 마이크 → 서버 → 자막 한 바퀴, 배터리 소모 측정
-2. AI 힌트 (제안·개념·인물), 대화 요약, 사전 노트, 번역 — [G2 기능 정리](docs/00-summary.md#g2-conversate-정리-문서확인)
+2. 실제 키로 AI 결과 품질·지연 확인, 프롬프트 다듬기
+3. 대화 요약, 사전 노트, 번역 — [G2 기능 정리](docs/00-summary.md#g2-conversate-정리-문서확인)
