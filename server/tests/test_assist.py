@@ -86,3 +86,39 @@ def test_skip_and_errors_send_nothing():
         assert sent == []
 
     run(main())
+
+
+def test_retry_after_parsing():
+    from conversate.assist import retry_after_seconds
+
+    msg = "Rate limit reached ... Please try again in 22.482s. Visit https://..."
+    assert retry_after_seconds(msg, None) == 22.482
+    assert retry_after_seconds("try again in 350ms", None) == 0.35
+    assert retry_after_seconds(msg, "7") == 7.0
+    assert retry_after_seconds("no hint", None) == 60.0
+
+
+def test_rate_limit_pushes_next_ask_out():
+    from conversate.assist import RateLimited
+
+    async def main():
+        now = [1000.0]
+
+        class Limited:
+            calls = 0
+
+            def suggest(self, transcript, shown):
+                Limited.calls += 1
+                raise RateLimited(30)
+
+        async def send(a):
+            pass
+
+        eng = AssistEngine(Limited(), send, AssistConfig(min_interval_s=15, min_new_chars=1), clock=lambda: now[0])
+        eng.on_final("첫 문장")
+        await asyncio.sleep(0.05)
+        assert Limited.calls == 1
+        # Next ask may not happen before the 30 s the API asked for.
+        assert eng.last_ask + eng.config.min_interval_s == 1030.0
+
+    run(main())

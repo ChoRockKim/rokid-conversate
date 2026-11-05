@@ -59,21 +59,50 @@ class OpenAIAssistant:
 
         self.model = os.environ.get("ASSIST_MODEL", "gpt-6.1-terra")
         self.web_search = os.environ.get("ASSIST_WEB_SEARCH", "1") != "0"
-        self.client = OpenAI(timeout=30.0)
+        # No SDK retries: a late answer is useless on the glasses, and retrying a rate-limited
+        # request only holds up the next one. AssistEngine backs off instead.
+        self.client = OpenAI(timeout=30.0, max_retries=0)
 
     def suggest(self, transcript: list[str], shown: list[str]) -> Assist | None:
+        from openai import RateLimitError
+
         prompt = "대화:\n" + "\n".join(f"- {line}" for line in transcript)
         if shown:
             prompt += "\n\n이미 보여준 주제: " + ", ".join(shown)
-        response = self.client.responses.create(
-            model=self.model,
-            instructions=INSTRUCTIONS,
-            input=prompt,
-            tools=[{"type": "web_search", "search_context_size": "low",
-                    "user_location": {"type": "approximate", "country": "KR"}}]
-            if self.web_search else [],
-        )
+        try:
+            response = self.client.responses.create(
+                model=self.model,
+                instructions=INSTRUCTIONS,
+                input=prompt,
+                tools=[{"type": "web_search", "search_context_size": "low",
+                        "user_location": {"type": "approximate", "country": "KR"}}]
+                if self.web_search else [],
+            )
+        except RateLimitError as e:
+            raise RateLimited(retry_after_seconds(str(e), e.response.headers.get("retry-after"))) from e
         return parse_reply(response.output_text)
+
+
+class RateLimited(Exception):
+    """The LLM said "too many requests"; wait [seconds] before asking again."""
+
+    def __init__(self, seconds: float) -> None:
+        super().__init__(f"rate limited, retry in {seconds:.0f}s")
+        self.seconds = seconds
+
+
+def retry_after_seconds(message: str, header: str | None) -> float:
+    """From the Retry-After header, or OpenAI's "Please try again in 22.482s"; 60 s otherwise."""
+    if header:
+        try:
+            return float(header)
+        except ValueError:
+            pass
+    match = re.search(r"try again in ([\d.]+)\s*(ms|s)", message)
+    if match:
+        value = float(match.group(1))
+        return value / 1000 if match.group(2) == "ms" else value
+    return 60.0
 
 
 def parse_reply(text: str) -> Assist | None:
@@ -161,6 +190,11 @@ class AssistEngine:
         transcript = list(self.lines)
         try:
             result = await asyncio.to_thread(self.assistant.suggest, transcript, list(self.shown))
+        except RateLimited as e:
+            log.warning("assist: %s", e)
+            # Push the next ask out until the limit resets (min_interval is counted from last_ask).
+            self.last_ask = self.clock() + e.seconds - self.config.min_interval_s
+            result = None
         except Exception:
             log.exception("assist failed")
             result = None
