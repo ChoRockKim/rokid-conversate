@@ -22,6 +22,7 @@ import threading
 import time
 from collections import deque
 
+import numpy as np
 from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
 
 from .assist import Assist, AssistEngine, Assistant, assistant_from_env
@@ -32,6 +33,7 @@ from .transcriber import FasterWhisperTranscriber, Transcriber
 log = logging.getLogger("conversate")
 
 LEVEL_INTERVAL_S = 0.25
+AUDIO_LOG_INTERVAL_S = 5.0
 
 
 _FROM_ENV = object()
@@ -62,7 +64,9 @@ def create_app(
             await websocket.close(code=1008)
             return
         await websocket.accept()
+        log.info("glasses connected from %s", websocket.client)
         await Session(websocket, stt, ai).run()
+        log.info("glasses disconnected")
 
     return app
 
@@ -87,6 +91,9 @@ class Session:
         self.work = asyncio.Event()
         self.received_samples = 0
         self.send_lock = asyncio.Lock()
+        self.stat_rms: list[float] = []
+        self.stat_zero = 0
+        self.stat_since = time.monotonic()
 
     async def send(self, message: dict) -> None:
         async with self.send_lock:
@@ -115,6 +122,7 @@ class Session:
             if message.get("bytes") is not None:
                 pcm = message["bytes"]
                 self.received_samples += len(pcm) // 2
+                self._track_audio(pcm)
                 for event in self.segmenter.feed(pcm):
                     self._enqueue(event)
                 now = time.monotonic()
@@ -131,7 +139,29 @@ class Session:
             elif message.get("text") is not None:
                 await self._on_text(message["text"])
 
+    def _track_audio(self, pcm: bytes) -> None:
+        """Logs what actually arrives every 5 s: seconds of audio, max/mean RMS, speech or not.
+        The main tool for telling "no audio" from "audio too quiet" when testing on the glasses."""
+        samples = np.frombuffer(pcm[: len(pcm) - len(pcm) % 2], dtype="<i2").astype(np.float32)
+        if samples.size:
+            rms = float(np.sqrt(np.mean(samples**2)))
+            self.stat_rms.append(rms)
+            self.stat_zero += int(np.count_nonzero(samples) == 0)
+        now = time.monotonic()
+        if now - self.stat_since >= AUDIO_LOG_INTERVAL_S and self.stat_rms:
+            log.info(
+                "audio: total %.1fs, last %.1fs: chunks %d (all-zero %d), rms max %.0f mean %.0f, "
+                "noise floor %.0f, in speech %s",
+                self.received_samples / SAMPLE_RATE, now - self.stat_since, len(self.stat_rms),
+                self.stat_zero, max(self.stat_rms), sum(self.stat_rms) / len(self.stat_rms),
+                self.segmenter._noise_floor, self.segmenter._state.in_speech,
+            )
+            self.stat_rms.clear()
+            self.stat_zero = 0
+            self.stat_since = now
+
     async def _on_text(self, text: str) -> None:
+        log.info("text from glasses: %s", text[:200])
         try:
             msg = json.loads(text)
         except json.JSONDecodeError:
