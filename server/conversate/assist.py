@@ -43,6 +43,8 @@ _CRITERIA = """대화를 듣는 사람에게 도움이 될 새 정보가 있으�
 - 전문 용어·약어·신조어, 또는 한 번 설명해 주면 좋을 개념
 - 대화에 나온 사람·회사·제품·작품·장소·사건에 대한 유용한 최신 사실 (가격, 출시일, 위치, 영업시간, 평가 등)
 - 대화 속 수치나 사실 주장이 틀렸거나 확인이 필요할 때
+- 사전 노트가 있으면: 대화가 노트에 적힌 사람·안건·숫자·용어에 닿을 때 그 노트 내용을 꺼내 준다 (kind: note).
+  예: 노트에 "단가 45만 원"이 있고 상대가 가격을 물으면 그 숫자를 띄운다
 핵심: 대화에 이미 나온 내용을 되풀이하거나 요약하는 것은 정보가 아니다. 대화에 없는 새 사실을 더할 수 있을 때만 답한다.
 다음은 건너뛴다:
 - 인사, 잡담, 감탄, "잘 들려?" 같은 확인, 의견·감정 표현만 있을 때
@@ -64,7 +66,7 @@ TRIAGE_INSTRUCTIONS = f"""너는 스마트 안경을 쓴 사용자의 대화를 
 반드시 JSON 하나만 출력한다.
 띄울 때:
 {{"quote": "근거가 된 [새] 줄의 말을 글자 그대로 (10~40자)",
-  "kind": "question | conversion | term | fact | correction 중 하나",
+  "kind": "question | conversion | term | fact | correction | note 중 하나",
   "why": "이 정보가 지금 대화에 왜 도움이 되는지 한 줄",
   "topic": "대화만 모르는 사람도 이해할 완전한 질문. 대명사·생략은 풀어 쓰고, 끝에 (상황: 지금 무슨 이야기 중인지 한 줄)"}}
 예: {{"quote": "이 운동화 110달러였어", "kind": "conversion", "why": "산 물건 가격을 원화로 가늠하려 함",
@@ -73,6 +75,7 @@ TRIAGE_INSTRUCTIONS = f"""너는 스마트 안경을 쓴 사용자의 대화를 
 
 ANSWER_INSTRUCTIONS = """너는 스마트 안경 화면에 짧은 정보를 띄우는 보조다.
 주어진 질문에 정확히 답한다. 환율·가격·최신 사실은 웹 검색으로 확인한다.
+사전 노트가 있으면 먼저 참고하고, 노트에 답이 있으면 노트 내용을 쓴다 (노트가 웹보다 우선).
 질문 끝의 (상황)과 대화 흐름을 보고, 이 대화를 하는 사람에게 지금 가장 쓸모 있는 각도로 답한다.
 예: 산 물건 가격이 비싸다는 이야기라면 원화 환산에 국내 가격과의 비교를 붙이고,
 약속 장소 이야기라면 위치·영업시간을, 사람 이야기라면 대화 주제와 관련된 경력을 고른다.
@@ -134,9 +137,11 @@ class OpenAIAssistant:
     ASSIST_WEB_SEARCH (1 default / 0), ASSIST_TRIAGE (1 default / 0 = one-step).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, notes: Callable[[], str] | None = None) -> None:
         from openai import OpenAI
 
+        # Prep notes the wearer wrote on the phone (notes.py); read fresh on every ask.
+        self.notes = notes or (lambda: "")
         self.model = os.environ.get("ASSIST_MODEL", "gpt-6.1-terra")
         # Triage decides what is worth interrupting with; the cheapest model picked off-topic
         # facts too often, and this call is short (no search), so a stronger model is cheap here.
@@ -148,9 +153,12 @@ class OpenAIAssistant:
         # request only holds up the next one. AssistEngine backs off instead.
         self.client = OpenAI(timeout=30.0, max_retries=0)
 
-    @staticmethod
-    def _conversation(transcript: list[str], shown: list[str]) -> str:
-        prompt = "대화:\n" + "\n".join(f"- {line}" for line in transcript)
+    def _conversation(self, transcript: list[str], shown: list[str]) -> str:
+        prompt = ""
+        notes = self.notes().strip()
+        if notes:
+            prompt += f"사전 노트 (사용자가 대화 전에 적어 둔 것):\n{notes[:4000]}\n\n"
+        prompt += "대화:\n" + "\n".join(f"- {line}" for line in transcript)
         if shown:
             prompt += "\n\n이미 보여준 주제: " + ", ".join(shown)
         return prompt
@@ -247,7 +255,7 @@ class Pick:
 
 # Kinds answered as soon as they come up; the rest (term, fact) are volunteered information
 # and rationed, so the card does not keep popping up with things nobody asked for.
-URGENT_KINDS = {"question", "conversion", "correction"}
+URGENT_KINDS = {"question", "conversion", "correction", "note"}
 
 
 def parse_triage(text: str) -> Pick | None:
@@ -342,11 +350,11 @@ def parse_reply(text: str) -> Assist | None:
     return Assist(title[:40], body[:200])
 
 
-def assistant_from_env() -> Assistant | None:
+def assistant_from_env(notes: Callable[[], str] | None = None) -> Assistant | None:
     if not os.environ.get("OPENAI_API_KEY"):
         log.info("OPENAI_API_KEY not set: AI panel (assist) is off")
         return None
-    return OpenAIAssistant()
+    return OpenAIAssistant(notes)
 
 
 @dataclass

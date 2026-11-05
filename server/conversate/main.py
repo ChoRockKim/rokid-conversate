@@ -29,6 +29,7 @@ import numpy as np
 from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
 
 from .assist import Assist, AssistEngine, Assistant, assistant_from_env
+from .notes import notes_router, notes_store_from_env
 from .ota import ota_router_from_env
 from .segmenter import SAMPLE_RATE, Event, Segmenter, SegmenterConfig
 from .transcriber import Transcriber, transcriber_from_env
@@ -59,7 +60,8 @@ def create_app(
 ) -> FastAPI:
     app = FastAPI(title="rokid-conversate")
     stt = transcriber or transcriber_from_env()
-    ai = assistant_from_env() if assistant is _FROM_ENV else assistant
+    notes = notes_store_from_env()
+    ai = assistant_from_env(notes.text) if assistant is _FROM_ENV else assistant
     tr = translator_from_env() if translator is _FROM_ENV else translator
     if live_factory is _FROM_ENV:
         live_on = os.environ.get("OPENAI_API_KEY") and os.environ.get("LIVE_TRANSLATE", "1") != "0"
@@ -70,6 +72,7 @@ def create_app(
         threading.Thread(target=local._get_model, daemon=True, name="whisper-preload").start()
     expected = token if token is not None else os.environ.get("CONVERSATE_TOKEN", "")
     app.include_router(ota or ota_router_from_env(expected))
+    app.include_router(notes_router(notes, expected))
 
     @app.get("/health")
     def health() -> dict:
