@@ -22,13 +22,14 @@ class FakeTranscriber:
 AUTH = {"Authorization": "Bearer secret"}
 
 
-def client(stt=None, assistant=None, translator=None):
+def client(stt=None, assistant=None, translator=None, live_factory=None):
     return TestClient(
         create_app(
             transcriber=stt or FakeTranscriber(), token="secret", assistant=assistant,
             # synthetic tones: energy detector (WebRTC VAD is checked with real speech separately)
             segmenter_config=SegmenterConfig(use_webrtc=False),
             translator=translator,
+            live_factory=live_factory,
         )
     )
 
@@ -160,3 +161,44 @@ def test_foreign_speech_gets_a_translation():
         second = read_until(ws, lambda m: m["type"] == "caption" and "translation" in m)
         assert second["id"] == first["id"]
         assert second["translation"] == "역이 어디예요?"
+
+
+def test_foreign_speech_opens_live_translation():
+    import asyncio as _a
+
+    opened = []
+
+    class FakeLive:
+        def __init__(self, on_line):
+            self.on_line, self.fed = on_line, 0
+            opened.append(self)
+
+        async def start(self):
+            pass
+
+        async def feed(self, pcm):
+            self.fed += 1
+            if self.fed == 3:
+                await self.on_line("How much is", "얼마", False)
+                await self.on_line("How much is this?", "이거 얼마예요?", True)
+
+        async def stop(self):
+            pass
+
+    class English:
+        def transcribe(self, audio, *, partial):
+            return "Where is the station?"
+
+    with client(stt=English(), live_factory=FakeLive).websocket_connect("/ws", headers=AUTH) as ws:
+        ws.send_text(json.dumps({"type": "hello"}))
+        ws.receive_text()
+        ws.send_bytes(silence(500) + tone(800))
+        ws.send_text(json.dumps({"type": "stop"}))
+        read_until(ws, lambda m: m["type"] == "caption" and m["final"])
+        # live session is open now; more audio flows into it
+        for _ in range(5):
+            ws.send_bytes(silence(100))
+        live = read_until(ws, lambda m: m["type"] == "caption" and m["id"] >= 1_000_000 and m["final"])
+        assert live["text"] == "How much is this?"
+        assert live["translation"] == "이거 얼마예요?"
+    assert len(opened) == 1

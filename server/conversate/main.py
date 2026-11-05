@@ -23,6 +23,7 @@ import os
 import threading
 import time
 from collections import deque
+from typing import Callable
 
 import numpy as np
 from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
@@ -32,10 +33,15 @@ from .ota import ota_router_from_env
 from .segmenter import SAMPLE_RATE, Event, Segmenter, SegmenterConfig
 from .transcriber import Transcriber, transcriber_from_env
 from .translate import Translator, needs_translation, translator_from_env
+from .live_translate import LiveTranslator
 
 log = logging.getLogger("conversate")
 
 LEVEL_INTERVAL_S = 0.25
+# Live translation closes after this long without foreign speech (it is billed per minute open).
+LIVE_IDLE_S = 30.0
+# Caption ids for live translation lines, far from the segmenter's ids.
+LIVE_ID_BASE = 1_000_000
 AUDIO_LOG_INTERVAL_S = 5.0
 
 
@@ -49,11 +55,15 @@ def create_app(
     ota: APIRouter | None = None,
     segmenter_config: SegmenterConfig | None = None,
     translator: Translator | None | object = _FROM_ENV,
+    live_factory: Callable[..., LiveTranslator] | None | object = _FROM_ENV,
 ) -> FastAPI:
     app = FastAPI(title="rokid-conversate")
     stt = transcriber or transcriber_from_env()
     ai = assistant_from_env() if assistant is _FROM_ENV else assistant
     tr = translator_from_env() if translator is _FROM_ENV else translator
+    if live_factory is _FROM_ENV:
+        live_on = os.environ.get("OPENAI_API_KEY") and os.environ.get("LIVE_TRANSLATE", "1") != "0"
+        live_factory = LiveTranslator if live_on else None
     local = getattr(stt, "local", stt)
     if os.environ.get("WHISPER_PRELOAD") == "1" and hasattr(local, "_get_model"):
         # Load the model in the background at startup, not on the first caption.
@@ -72,7 +82,7 @@ def create_app(
             return
         await websocket.accept()
         log.info("glasses connected from %s", websocket.client)
-        await Session(websocket, stt, ai, segmenter_config, tr).run()
+        await Session(websocket, stt, ai, segmenter_config, tr, live_factory).run()
         log.info("glasses disconnected")
 
     return app
@@ -94,10 +104,16 @@ class Session:
         ai: Assistant | None = None,
         segmenter_config: SegmenterConfig | None = None,
         translator: Translator | None = None,
+        live_factory: Callable[..., LiveTranslator] | None = None,
     ) -> None:
         self.ws = websocket
         self.stt = stt
         self.translator = translator
+        # Live translation: opened when foreign speech is heard, closed after LIVE_IDLE_S without.
+        self.live_factory = live_factory
+        self.live: LiveTranslator | None = None
+        self.live_until = 0.0
+        self.live_id = LIVE_ID_BASE
         self.assist = (
             AssistEngine(ai, self._send_assist, on_busy=self._send_assist_busy) if ai is not None else None
         )
@@ -132,6 +148,7 @@ class Session:
             worker.cancel()
             if self.assist is not None:
                 self.assist.close()
+            await self._stop_live()
 
     async def _receive_loop(self) -> None:
         last_level = 0.0
@@ -143,6 +160,11 @@ class Session:
                 pcm = message["bytes"]
                 self.received_samples += len(pcm) // 2
                 self._track_audio(pcm)
+                if self.live is not None:
+                    if time.monotonic() > self.live_until:
+                        await self._stop_live()
+                    else:
+                        await self.live.feed(pcm)
                 for event in self.segmenter.feed(pcm):
                     self._enqueue(event)
                 now = time.monotonic()
@@ -238,14 +260,50 @@ class Session:
                     self.last_final_id = event.segment_id
                 elif event.segment_id <= self.last_final_id:
                     continue  # the final for this utterance overtook us
-                if text or final:
-                    await self.send(
-                        {"type": "caption", "id": event.segment_id, "text": text, "final": final}
-                    )
-                if final and text and self.translator is not None and needs_translation(text):
-                    asyncio.create_task(self._translate(event.segment_id, text))
+                foreign = bool(final and text and needs_translation(text))
+                if self.live is not None and (not final or foreign):
+                    # Live translation is on: it already shows foreign speech as it is spoken.
+                    # Skip the Korean-only Whisper partials and this foreign final (duplicates).
+                    if foreign:
+                        self.live_until = time.monotonic() + LIVE_IDLE_S
+                else:
+                    if text or final:
+                        await self.send(
+                            {"type": "caption", "id": event.segment_id, "text": text, "final": final}
+                        )
+                    if foreign and self.translator is not None:
+                        asyncio.create_task(self._translate(event.segment_id, text))
+                    if foreign:
+                        await self._start_live()
                 if final and text and self.assist is not None:
                     self.assist.on_final(text)
+
+    async def _start_live(self) -> None:
+        self.live_until = time.monotonic() + LIVE_IDLE_S
+        if self.live is not None or self.live_factory is None:
+            return
+        live = self.live_factory(on_line=self._send_live_line)
+        try:
+            await live.start()
+        except Exception:
+            log.exception("live translation: could not open a session")
+            return
+        self.live = live
+
+    async def _stop_live(self) -> None:
+        live, self.live = self.live, None
+        if live is not None:
+            await live.stop()
+
+    async def _send_live_line(self, source: str, korean: str, final: bool) -> None:
+        if needs_translation(source):
+            self.live_until = time.monotonic() + LIVE_IDLE_S
+        message = {"type": "caption", "id": self.live_id, "text": source, "final": final}
+        if korean:
+            message["translation"] = korean
+        await self.send(message)
+        if final:
+            self.live_id += 1
 
     async def _translate(self, segment_id: int, text: str) -> None:
         """Foreign speech: send the same caption again with a Korean "translation" field."""
