@@ -23,6 +23,7 @@ WebSocket 하나로 오간다. 주소는 `ws://<서버>:8000/ws` (외부에서�
 | `{"type":"level","rms":123.4,"speech":false,"received_ms":5000}` | 0.25초마다. 서버가 받은 소리 크기(int16 RMS), 말하는 중인지, 지금까지 받은 길이. 마이크·네트워크 점검용 |
 | `{"type":"caption","id":3,"text":"...","final":false}` | 자막. 같은 `id` 의 `final:false` 는 계속 덮어쓰고, `final:true` 가 오면 확정 |
 | `{"type":"error","message":"..."}` | 오류. 연결은 유지 |
+| `{"type":"assist_status","busy":true}` | AI 요청 시작(true)/끝(false). 안경은 그동안 `생각 중…` |
 | `{"type":"assist","title":"...","text":"..."}` | 화면 위쪽 30% 의 AI 결과 (용어 설명, 검색 답, 인물·회사 배경). `text` 가 비면 지움. 서버에 `OPENAI_API_KEY` 가 있을 때만 |
 
 ## 서버 안에서 일어나는 일

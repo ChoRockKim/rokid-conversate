@@ -21,14 +21,16 @@ iPhone 은 개인용 핫스팟으로 인터넷만 준다 (폰 앱 없음)
 |---|---|---|
 | ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewSnapshotTest_listening_01_listening.png) | ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewSnapshotTest_longConversationCutsFromTop_02_long.png) | ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewFullScreenSnapshotTest_onGlassesScreen_00_full_screen.png) |
 
-| AI 결과 없을 때 | 정지 | 서버 설정 전 | 연결 끊김 + 지난 자막 보는 중 |
+| AI 생각 중 (충전 중) | 정지 (배터리 부족) | 서버 설정 전 | 연결 끊김 + 지난 자막 보는 중 |
 |---|---|---|---|
-| ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewSnapshotTest_noAssistYet_06_no_assist.png) | ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewSnapshotTest_stopped_03_stopped.png) | ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewSnapshotTest_notConfigured_04_not_configured.png) | ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewSnapshotTest_reconnectingWhileScrolledBack_05_reconnecting_scrolled.png) |
+| ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewSnapshotTest_aiThinking_07_ai_thinking.png) | ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewSnapshotTest_stopped_03_stopped.png) | ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewSnapshotTest_notConfigured_04_not_configured.png) | ![](glasses/app/src/test/snapshots/images/com.chorockkim.conversate_HudViewSnapshotTest_reconnectingWhileScrolledBack_05_reconnecting_scrolled.png) |
 
 [Paparazzi](https://github.com/cashapp/paparazzi) 가 실제 그리기 코드로 그린 것 (`./gradlew :app:recordPaparazziDebug`).
 
 - 480x282 논리 단위로 그리고 실제 화면에 비율을 유지한 채 맞춰 줄여 아래 가운데에 둔다. 여백 18, 위 줄 기준선 27, 아래 줄 272. 배경·테두리 없음 (검정 = 안경에서 투명).
-- 위쪽 약 30% (논리 y 36~120) 는 자막을 쓰지 않고 **AI 결과 자리**로 둔다. 서버가 대화를 OpenAI 에 보내 용어 설명·검색 답·인물/회사 배경 중 도움이 될 것 하나를 받아 띄운다 (`OPENAI_API_KEY` 가 있을 때만, 15초에 한 번까지).
+- 위쪽 약 30% (논리 y 36~120) 는 자막을 쓰지 않고 **AI 결과 자리**로 둔다. 너비 70% 의 테두리 카드로 가운데에, AI 가 답을 만드는 동안은 `생각 중…`.
+- 오른쪽 아래: 시각, 배터리 (충전 중이면 번개·초록, 15% 이하면 흰색).
+- AI 요청: 질문으로 보이는 문장(`?`, 언제·누구·뭐…, ~더라·~나요)은 바로, 그 밖에는 새 글자 20자·8초마다. 답에 붙는 링크·출처는 지운다. 서버가 대화를 OpenAI 에 보내 용어 설명·검색 답·인물/회사 배경 중 도움이 될 것 하나를 받아 띄운다 (`OPENAI_API_KEY` 가 있을 때만, 15초에 한 번까지).
 - 자막은 13 크기. 가장 최근 줄만 밝은 초록, 지나간 줄은 연한 초록. 넘치면 오래된 것부터 위로 잘린다.
 
 ## 조작

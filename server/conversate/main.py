@@ -8,6 +8,7 @@ Protocol (see docs/protocol.md):
                      {"type":"level","rms":123.4,"speech":false,"received_ms":5000}
                      {"type":"caption","id":3,"text":"...","final":false}
                      {"type":"assist","title":"...","text":"..."}   AI panel (needs OPENAI_API_KEY)
+                     {"type":"assist_status","busy":true}            AI request running / done
                      {"type":"error","message":"..."}
 """
 
@@ -83,7 +84,9 @@ class Session:
     def __init__(self, websocket: WebSocket, stt: Transcriber, ai: Assistant | None = None) -> None:
         self.ws = websocket
         self.stt = stt
-        self.assist = AssistEngine(ai, self._send_assist) if ai is not None else None
+        self.assist = (
+            AssistEngine(ai, self._send_assist, on_busy=self._send_assist_busy) if ai is not None else None
+        )
         self.segmenter = Segmenter()
         self.finals: deque[Event] = deque()
         self.partial: Event | None = None
@@ -101,6 +104,9 @@ class Session:
 
     async def _send_assist(self, result: Assist) -> None:
         await self.send({"type": "assist", "title": result.title, "text": result.text})
+
+    async def _send_assist_busy(self, busy: bool) -> None:
+        await self.send({"type": "assist_status", "busy": busy})
 
     async def run(self) -> None:
         worker = asyncio.create_task(self._transcribe_loop())

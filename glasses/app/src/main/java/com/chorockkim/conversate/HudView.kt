@@ -26,9 +26,9 @@ import kotlin.math.abs
  * black is see-through on the waveguide.
  *
  *   baseline 27   ● 연결됨                                   듣는 중 ▂▃▅
- *   y 36..120     AI panel (top ~30%): search / summary results, empty until the server sends one
+ *   y 36..120     AI card (top ~30%): 70% wide, centred, bordered; "생각 중" while the AI works
  *   y 128..252    captions, newest at the bottom; only the newest line is bright, older ones faint
- *   baseline 272  hint                                                HH:mm
+ *   baseline 272  hint                                 HH:mm  ⚡▭ 82%
  *
  * R08 ring (R08 Access Bridge), same approach as the navigation app: the bridge's accessibility
  * service moves focus between candidates, then scrolls the focused node, then injects swipes, for
@@ -52,10 +52,15 @@ class HudView(context: Context) : View(context) {
         val notice: String = "",
         /** AI result for the top panel (null = leave it empty). */
         val assist: Assist? = null,
+        /** The server is waiting on the AI (shows "생각 중"). */
+        val assistBusy: Boolean = false,
         /** Short-lived status (update progress, errors), shown instead of the hint line. */
         val message: String? = null,
         /** Version being installed/waiting, shown bottom right before the time ("새 버전 0.2.0"). */
         val update: String? = null,
+        /** Glasses battery % (null = unknown) and whether it is charging, bottom right. */
+        val battery: Int? = null,
+        val charging: Boolean = false,
     )
 
     data class Assist(val title: String, val text: String)
@@ -133,7 +138,20 @@ class HudView(context: Context) : View(context) {
     private val updatePaint = paint(12f, green)
     private val assistTitle = paint(13f, green, bold = true)
     private val assistBody = paint(13f, Color.WHITE)
-    private val divider = Paint().apply { color = Color.parseColor("#1f4a2e"); strokeWidth = 1f }
+    private val assistBusy = paint(12f, dim)
+    private val modalFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
+    private val modalBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 1.5f
+        color = Color.parseColor("#2f7a4a")
+    }
+    private val modalRect = android.graphics.RectF()
+    private val batteryFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val batteryOutline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 1f
+        color = Color.parseColor("#4da86c")
+    }
     private val bars = Paint(Paint.ANTI_ALIAS_FLAG)
 
     /** Logical unit -> real pixels (1 on a 480 px wide screen). */
@@ -158,7 +176,7 @@ class HudView(context: Context) : View(context) {
         canvas.drawText(conn, 0, conn.length, MARGIN, TOP_BASELINE, small)
         drawMic(canvas, s)
 
-        drawAssist(canvas, s.assist)
+        drawAssist(canvas, s.assist, s.assistBusy)
 
         // Captions, bottom-up from just above the hint line.
         if (s.lines.isEmpty()) {
@@ -185,8 +203,9 @@ class HudView(context: Context) : View(context) {
         }
 
         // Bottom line: hint (left), time (right).
+        var right = drawBattery(canvas, W - MARGIN, s.battery, s.charging)
         val time = clockText(clock())
-        var right = W - MARGIN - tiny.measureText(time)
+        right -= tiny.measureText(time)
         canvas.drawText(time, right, BOTTOM_BASELINE, tiny)
         s.update?.let { u ->
             val label = "새 버전 $u"
@@ -224,26 +243,104 @@ class HudView(context: Context) : View(context) {
         canvas.drawText(label, x - small.measureText(label), TOP_BASELINE, small)
     }
 
-    /** Top panel: bold title line, then the text, cut to the panel height. */
-    private fun drawAssist(canvas: Canvas, assist: Assist?) {
-        if (assist == null) return
-        canvas.save()
-        canvas.clipRect(0f, ASSIST_TOP, W, ASSIST_BOTTOM)
-        var y = ASSIST_TOP
-        if (assist.title.isNotEmpty()) {
-            val t = TextUtils.ellipsize("✦ ${assist.title}", assistTitle, W - 2 * MARGIN, TextUtils.TruncateAt.END)
-            canvas.drawText(t, 0, t.length, MARGIN, y + 13f, assistTitle)
-            y += 19f
+    /**
+     * Bottom-right battery, ending at [end]: optional bolt (charging), battery outline filled to
+     * the level, nub, then "82%". Returns the x where the next item (time) should end.
+     * Fill: green while charging, white at 15% or less, dim otherwise.
+     */
+    private fun drawBattery(canvas: Canvas, end: Float, battery: Int?, charging: Boolean): Float {
+        val pct = battery ?: return end
+        val label = "$pct%"
+        var x = end - tiny.measureText(label)
+        tiny.color = if (charging) green else if (pct <= 15) Color.WHITE else dim
+        canvas.drawText(label, x, BOTTOM_BASELINE, tiny)
+        tiny.color = dim
+        x -= 4f
+        val bw = 16f
+        val bh = 8f
+        val top = BOTTOM_BASELINE - bh - 1f
+        // nub on the right, body to its left
+        batteryFill.color = dim
+        canvas.drawRect(x - 2f, top + 2.5f, x, top + bh - 2.5f, batteryFill)
+        modalRect.set(x - 2f - bw, top, x - 2f, top + bh)
+        canvas.drawRoundRect(modalRect, 1.5f, 1.5f, batteryOutline)
+        batteryFill.color = if (charging) green else if (pct <= 15) Color.WHITE else dim
+        canvas.drawRect(
+            modalRect.left + 1.5f, modalRect.top + 1.5f,
+            modalRect.left + 1.5f + (bw - 3f) * pct.coerceIn(0, 100) / 100f, modalRect.bottom - 1.5f,
+            batteryFill,
+        )
+        x = modalRect.left
+        if (charging) {
+            // small lightning bolt
+            val bx = x - 8f
+            val path = android.graphics.Path().apply {
+                moveTo(bx + 4f, top - 2f)
+                lineTo(bx, top + 5f)
+                lineTo(bx + 3f, top + 5f)
+                lineTo(bx + 2f, top + bh + 2f)
+                lineTo(bx + 6f, top + 3f)
+                lineTo(bx + 3f, top + 3f)
+                close()
+            }
+            batteryFill.color = green
+            canvas.drawPath(path, batteryFill)
+            x = bx
         }
-        val body = StaticLayout.Builder.obtain(assist.text, 0, assist.text.length, assistBody, (W - 2 * MARGIN).toInt())
+        return x - 8f
+    }
+
+    /**
+     * Top panel as a separate card: 70% of the width, centred, rounded border. Shows the latest
+     * AI result; while a request is running, "생각 중" with moving dots (in the title row, or as
+     * a small card on its own when there is no result yet).
+     */
+    private fun drawAssist(canvas: Canvas, assist: Assist?, busy: Boolean) {
+        if (assist == null && !busy) return
+        val left = (W - MODAL_WIDTH) / 2
+        val right = left + MODAL_WIDTH
+        val inner = MODAL_WIDTH - 2 * MODAL_PAD
+        val dots = ".".repeat(1 + ((clock() / 400) % 3).toInt())
+        val thinking = "생각 중$dots"
+
+        if (assist == null) {
+            val bottom = ASSIST_TOP + 2 * MODAL_PAD + 14f
+            modalRect.set(left, ASSIST_TOP, right, bottom)
+            canvas.drawRoundRect(modalRect, MODAL_RADIUS, MODAL_RADIUS, modalFill)
+            canvas.drawRoundRect(modalRect, MODAL_RADIUS, MODAL_RADIUS, modalBorder)
+            canvas.drawText("✦ AI $thinking", left + MODAL_PAD, ASSIST_TOP + MODAL_PAD + 12f, assistBusy)
+            postInvalidateDelayed(400)
+            return
+        }
+
+        // Size the card to its content, up to the reserved area.
+        val title = assist.title
+        val titleH = if (title.isNotEmpty() || busy) 19f else 0f
+        val maxBodyLines = ((ASSIST_BOTTOM - ASSIST_TOP - 2 * MODAL_PAD - titleH) / 16f).toInt().coerceAtLeast(1)
+        val body = StaticLayout.Builder.obtain(assist.text, 0, assist.text.length, assistBody, inner.toInt())
             .setLineSpacing(0f, 1.1f)
-            .setMaxLines(((ASSIST_BOTTOM - y) / 16f).toInt().coerceAtLeast(1))
+            .setMaxLines(maxBodyLines)
             .setEllipsize(TextUtils.TruncateAt.END)
             .build()
-        canvas.translate(MARGIN, y)
+        val bottom = (ASSIST_TOP + 2 * MODAL_PAD + titleH + body.height).coerceAtMost(ASSIST_BOTTOM)
+        modalRect.set(left, ASSIST_TOP, right, bottom)
+        canvas.drawRoundRect(modalRect, MODAL_RADIUS, MODAL_RADIUS, modalFill)
+        canvas.drawRoundRect(modalRect, MODAL_RADIUS, MODAL_RADIUS, modalBorder)
+
+        canvas.save()
+        canvas.clipRect(modalRect)
+        var y = ASSIST_TOP + MODAL_PAD
+        if (titleH > 0f) {
+            val busyW = if (busy) assistBusy.measureText("생각 중...") + 8f else 0f
+            val t = TextUtils.ellipsize("✦ $title", assistTitle, inner - busyW, TextUtils.TruncateAt.END)
+            canvas.drawText(t, 0, t.length, left + MODAL_PAD, y + 12f, assistTitle)
+            if (busy) canvas.drawText(thinking, right - MODAL_PAD - busyW + 8f, y + 12f, assistBusy)
+            y += titleH
+        }
+        canvas.translate(left + MODAL_PAD, y)
         body.draw(canvas)
         canvas.restore()
-        canvas.drawLine(MARGIN, ASSIST_BOTTOM + 4f, W - MARGIN, ASSIST_BOTTOM + 4f, divider)
+        if (busy) postInvalidateDelayed(400)
     }
 
     private fun drawBlock(canvas: Canvas, text: String, paint: TextPaint, bottom: Float) {
@@ -273,6 +370,10 @@ class HudView(context: Context) : View(context) {
         const val ASSIST_TOP = 36f
         const val ASSIST_BOTTOM = ASSIST_TOP + 84f
         const val CAPTION_TOP = ASSIST_BOTTOM + 8f
+        /** AI card: 70% of the width, centred. */
+        const val MODAL_WIDTH = W * 0.7f
+        const val MODAL_PAD = 8f
+        const val MODAL_RADIUS = 6f
         const val CAPTION_BOTTOM = H - 30f
         const val CAPTION_SIZE = 13f
         const val LINE_GAP = 4f

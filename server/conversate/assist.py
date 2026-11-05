@@ -36,13 +36,38 @@ class Assistant(Protocol):
 INSTRUCTIONS = """너는 스마트 안경을 쓴 사용자의 대화를 옆에서 돕는 보조다.
 아래 대화 받아쓰기(음성 인식이라 틀린 글자가 있을 수 있음)를 보고, 지금 사용자에게 가장 도움이 될 것 딱 하나를 고른다:
 - 낯선 용어·약어·고유명사 설명
-- 대화에 나온 사실 질문에 대한 답 (필요하면 웹 검색)
+- 대화에 나온 사실 질문에 대한 답 (필요하면 웹 검색). 마지막 문장이 질문이면 그 답이 최우선
 - 언급된 사람·회사·제품의 배경
 도움이 될 게 없거나, 이미 보여준 주제와 겹치면 건너뛴다.
 
 안경 화면이 아주 작다. 반드시 JSON 하나만 출력한다:
-{"title": "20자 이내 주제", "text": "한국어 120자 이내, 핵심만"}
+{"title": "15자 이내 주제", "text": "한국어 80자 이내, 핵심 사실만 한두 문장"}
+링크, URL, 출처 표시, 괄호 속 사이트 이름은 절대 넣지 않는다.
 건너뛸 때는 {"skip": true}"""
+
+# Korean/English cues that a finished caption is a question worth answering right away.
+_QUESTION = re.compile(
+    r"\?|？|언제|어디|누구|누가|왜|뭐|무엇|무슨|몇|얼마|어떻게|어떤|어느"
+    r"|더라|나요|까요|ㄹ까|을까|를까|니\s*$|냐\s*$|지\s*$|죠\s*$|는지|인지"
+    r"|\b(what|when|where|who|why|how|which)\b",
+    re.IGNORECASE,
+)
+
+
+def looks_like_question(text: str) -> bool:
+    return bool(_QUESTION.search(text))
+
+
+_MD_LINK = re.compile(r"\(?\[([^\]]*)\]\([^)]*\)\)?")
+_URL = re.compile(r"\(?https?://\S+\)?")
+
+
+def strip_links(text: str) -> str:
+    """Web search answers come with citations like "([site](https://...))"; drop them."""
+    text = _MD_LINK.sub("", text)
+    text = _URL.sub("", text)
+    text = re.sub(r"\(\s*\)", "", text)
+    return re.sub(r"\s{2,}", " ", text).strip()
 
 
 class OpenAIAssistant:
@@ -126,11 +151,11 @@ def parse_reply(text: str) -> Assist | None:
         return None
     if not isinstance(data, dict) or data.get("skip"):
         return None
-    title = str(data.get("title", "")).strip()
-    body = str(data.get("text", "")).strip()
+    title = strip_links(str(data.get("title", "")))
+    body = strip_links(str(data.get("text", "")))
     if not body:
         return None
-    return Assist(title[:40], body[:300])
+    return Assist(title[:40], body[:200])
 
 
 def assistant_from_env() -> Assistant | None:
@@ -143,9 +168,11 @@ def assistant_from_env() -> Assistant | None:
 @dataclass
 class AssistConfig:
     # Ask at most this often ...
-    min_interval_s: float = 15.0
+    min_interval_s: float = 8.0
     # ... and only once this much new speech has been transcribed since the last ask.
-    min_new_chars: int = 40
+    min_new_chars: int = 20
+    # A finished caption that looks like a question is asked right away (only this gap).
+    question_interval_s: float = 2.0
     # How much of the conversation the model sees.
     context_lines: int = 12
     # Titles remembered to avoid repeating a topic.
@@ -161,9 +188,12 @@ class AssistEngine:
         send: Callable[[Assist], Awaitable[None]],
         config: AssistConfig | None = None,
         clock: Callable[[], float] = time.monotonic,
+        on_busy: Callable[[bool], Awaitable[None]] | None = None,
     ) -> None:
         self.assistant = assistant
         self.send = send
+        # Told when a request to the LLM starts (True) and ends (False), for a "thinking" hint.
+        self.on_busy = on_busy
         self.config = config or AssistConfig()
         self.clock = clock
         self.lines: deque[str] = deque(maxlen=self.config.context_lines)
@@ -171,6 +201,12 @@ class AssistEngine:
         self.new_chars = 0
         self.last_ask = -1e9
         self.task: asyncio.Task | None = None
+        # True while self.task is only sleeping before its ask (safe to cancel and restart).
+        self.waiting = False
+        # A question arrived; ask as soon as possible.
+        self.question = False
+        # After a rate-limit answer, nothing is asked before this time.
+        self.cooldown_until = -1e9
 
     def on_final(self, text: str) -> None:
         text = text.strip()
@@ -178,36 +214,48 @@ class AssistEngine:
             return
         self.lines.append(text)
         self.new_chars += len(text)
+        if looks_like_question(text):
+            self.question = True
         self._maybe_ask()
 
     def _maybe_ask(self) -> None:
         cfg = self.config
         if self.task is not None and not self.task.done():
-            return  # re-checked when the running ask finishes
-        if self.new_chars < cfg.min_new_chars:
+            if not (self.question and self.waiting):
+                return  # re-checked when the running ask finishes
+            self.task.cancel()  # a question jumps the queue of a scheduled, not yet sent ask
+        if not self.question and self.new_chars < cfg.min_new_chars:
             return
-        wait = cfg.min_interval_s - (self.clock() - self.last_ask)
-        if wait > 0:
-            self.task = asyncio.create_task(self._ask_after(wait))
-        else:
-            self.task = asyncio.create_task(self._ask_after(0))
+        gap = cfg.question_interval_s if self.question else cfg.min_interval_s
+        now = self.clock()
+        wait = max(0.0, gap - (now - self.last_ask), self.cooldown_until - now)
+        self.task = asyncio.create_task(self._ask_after(wait))
 
     async def _ask_after(self, delay: float) -> None:
-        if delay > 0:
-            await asyncio.sleep(delay)
+        self.waiting = True
+        try:
+            if delay > 0:
+                await asyncio.sleep(delay)
+        finally:
+            self.waiting = False
         self.last_ask = self.clock()
         self.new_chars = 0
+        self.question = False
         transcript = list(self.lines)
+        if self.on_busy is not None:
+            await self.on_busy(True)
         try:
             result = await asyncio.to_thread(self.assistant.suggest, transcript, list(self.shown))
         except RateLimited as e:
             log.warning("assist: %s", e)
-            # Push the next ask out until the limit resets (min_interval is counted from last_ask).
-            self.last_ask = self.clock() + e.seconds - self.config.min_interval_s
+            # No ask (not even for a question) until the limit resets.
+            self.cooldown_until = self.clock() + e.seconds
             result = None
         except Exception:
             log.exception("assist failed")
             result = None
+        if self.on_busy is not None:
+            await self.on_busy(False)
         if result is not None:
             if result.title:
                 self.shown.append(result.title)

@@ -117,6 +117,8 @@ def test_assist_message_after_enough_speech():
         # Two utterances pass the 40-char bar that triggers an ask.
         for _ in range(2):
             ws.send_bytes(silence(300) + tone(600) + silence(900))
+        busy = read_until(ws, lambda m: m["type"] == "assist_status")
+        assert busy["busy"] is True
         msg = read_until(ws, lambda m: m["type"] == "assist")
         assert msg["title"] == "요약"
         assert msg["text"].endswith("줄")

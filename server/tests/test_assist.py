@@ -119,6 +119,86 @@ def test_rate_limit_pushes_next_ask_out():
         await asyncio.sleep(0.05)
         assert Limited.calls == 1
         # Next ask may not happen before the 30 s the API asked for.
-        assert eng.last_ask + eng.config.min_interval_s == 1030.0
+        assert eng.cooldown_until == 1030.0
+
+    run(main())
+
+
+def test_strip_links_and_reply_cleanup():
+    from conversate.assist import strip_links
+
+    t = "방탄소년단은 2013년 6월 13일 데뷔했어요. ([hybecorp.com](https://hybecorp.com/attachment/download?x=1))"
+    assert strip_links(t) == "방탄소년단은 2013년 6월 13일 데뷔했어요."
+    assert strip_links("자세한 건 https://example.com/a?b=c 참고") == "자세한 건 참고"
+    assert strip_links("[위키](https://ko.wikipedia.org) 기준 1위") == "기준 1위"
+    reply = '{"title":"방탄소년단 데뷔","text":"2013년 6월 13일 데뷔. ([hybecorp.com](https://hybecorp.com/x))"}'
+    assert parse_reply(reply) == Assist("방탄소년단 데뷔", "2013년 6월 13일 데뷔.")
+
+
+def test_question_detection():
+    from conversate.assist import looks_like_question
+
+    for q in ["방탄소년단이 언제 데뷔했더라", "잘 들려?", "그거 누가 만들었지", "몇 명이나 와요?", "what is CPC"]:
+        assert looks_like_question(q), q
+    for s in ["안녕", "그러니까 삼각대는 아반떼 AD의 페이스리프트 모델", "오늘 회의를 시작하겠습니다"]:
+        assert not looks_like_question(s), s
+
+
+def test_question_is_asked_at_once_even_when_short():
+    async def main():
+        rec, sent = Recorder(), []
+
+        async def send(a):
+            sent.append(a)
+
+        eng = AssistEngine(rec, send, AssistConfig(min_interval_s=60, min_new_chars=40, question_interval_s=0))
+        eng.on_final("안녕")
+        await asyncio.sleep(0.05)
+        assert rec.calls == []
+        eng.on_final("방탄소년단이 언제 데뷔했더라")  # short, but a question
+        await asyncio.sleep(0.05)
+        assert len(rec.calls) == 1
+        assert rec.calls[0][0][-1] == "방탄소년단이 언제 데뷔했더라"
+
+    run(main())
+
+
+def test_question_jumps_a_scheduled_ask():
+    async def main():
+        now = [0.0]
+        rec = Recorder()
+
+        async def send(a):
+            pass
+
+        cfg = AssistConfig(min_interval_s=30, min_new_chars=1, question_interval_s=0)
+        eng = AssistEngine(rec, send, cfg, clock=lambda: now[0])
+        eng.on_final("첫 문장입니다")  # asked at once (never asked before)
+        await asyncio.sleep(0.05)
+        eng.on_final("두 번째 문장입니다")  # scheduled 30 s out
+        await asyncio.sleep(0.05)
+        assert len(rec.calls) == 1
+        eng.on_final("그게 언제였지?")  # question: cancels the wait, asks now
+        await asyncio.sleep(0.05)
+        assert len(rec.calls) == 2
+        assert rec.calls[1][0][-1] == "그게 언제였지?"
+
+    run(main())
+
+
+def test_busy_is_reported_around_the_request():
+    async def main():
+        events = []
+
+        async def send(a):
+            events.append(("assist", a.title))
+
+        async def busy(b):
+            events.append(("busy", b))
+
+        eng = AssistEngine(Recorder(), send, AssistConfig(min_interval_s=0, min_new_chars=1), on_busy=busy)
+        eng.on_final("무언가")
+        await asyncio.sleep(0.05)
+        assert events == [("busy", True), ("busy", False), ("assist", "주제")]
 
     run(main())

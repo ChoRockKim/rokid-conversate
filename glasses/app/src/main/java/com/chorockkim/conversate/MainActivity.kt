@@ -40,6 +40,20 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     private var level = 0.0
     private var notice = ""
     private var assist: HudView.Assist? = null
+    private var assistBusy = false
+    private var battery: Int? = null
+    private var charging = false
+    private val batteryReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context, intent: Intent) {
+            val level = intent.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1)
+            val scale = intent.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, 100)
+            battery = if (level >= 0 && scale > 0) level * 100 / scale else null
+            val status = intent.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1)
+            charging = status == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
+                status == android.os.BatteryManager.BATTERY_STATUS_FULL
+            render()
+        }
+    }
     private var message: String? = null
     /** Update check runs once per launch (onCreate), at the first server connection. */
     private var updateChecked = false
@@ -102,12 +116,15 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
 
     override fun onResume() {
         super.onResume()
+        // Sticky broadcast: delivers the current level at once, then every change.
+        registerReceiver(batteryReceiver, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         connectIfConfigured()
         // So R08 Access Bridge treats this view as the current focus from the first ring input.
         hud.requestFocus()
     }
 
     override fun onPause() {
+        runCatching { unregisterReceiver(batteryReceiver) }
         stopListening()
         client.disconnect()
         super.onPause()
@@ -244,6 +261,7 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
             is Protocol.ServerMessage.Error -> notice = "서버 오류: ${message.message}"
             is Protocol.ServerMessage.Assist ->
                 assist = if (message.text.isBlank()) null else HudView.Assist(message.title, message.text)
+            is Protocol.ServerMessage.AssistStatus -> assistBusy = message.busy
             else -> return
         }
         render()
@@ -262,7 +280,10 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
             scrollBack = captions.scrollBack,
             notice = notice,
             assist = assist,
+            assistBusy = assistBusy && connected,
             message = message,
+            battery = battery,
+            charging = charging,
             update = updater.available?.versionName,
         )
     }

@@ -22,8 +22,8 @@ class HudViewSnapshotTest {
         init { java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Asia/Seoul")) }
 
         val ASSIST = HudView.Assist(
-            "검색 광고 vs 영상 광고",
-            "검색 광고는 구매 의도가 높은 사용자를 잡아 전환율이 높고, 영상 광고는 도달과 인지도에 강하다. 보통 검색 광고 CPC 가 더 비싸다.",
+            "방탄소년단 데뷔",
+            "2013년 6월 13일 데뷔했어요. 데뷔곡은 'No More Dream'입니다.",
         )
 
         val MEETING = listOf(
@@ -48,7 +48,7 @@ class HudViewSnapshotTest {
     }
 
     @Test fun listening() = paparazzi.snapshot(
-        hud(HudView.State(connection = "연결됨", connected = true, listening = true, level = 1200.0, lines = MEETING, assist = ASSIST)),
+        hud(HudView.State(connection = "연결됨", connected = true, listening = true, level = 1200.0, lines = MEETING, assist = ASSIST, battery = 82)),
         "01_listening",
     )
 
@@ -66,13 +66,23 @@ class HudViewSnapshotTest {
         "02_long",
     )
 
+    @Test fun aiThinking() = paparazzi.snapshot(
+        hud(HudView.State(connection = "연결됨", connected = true, listening = true, level = 900.0, lines = MEETING, assistBusy = true, battery = 64, charging = true)),
+        "07_ai_thinking",
+    )
+
+    @Test fun aiThinkingOverOldResult() = paparazzi.snapshot(
+        hud(HudView.State(connection = "연결됨", connected = true, listening = true, level = 900.0, lines = MEETING, assist = ASSIST, assistBusy = true)),
+        "08_ai_thinking_with_result",
+    )
+
     @Test fun noAssistYet() = paparazzi.snapshot(
         hud(HudView.State(connection = "연결됨", connected = true, listening = true, level = 1200.0, lines = MEETING)),
         "06_no_assist",
     )
 
     @Test fun stopped() = paparazzi.snapshot(
-        hud(HudView.State(connection = "연결됨", connected = true, notice = "탭해서 듣기 시작\n서버 ws://172.20.10.2:8000/ws")),
+        hud(HudView.State(connection = "연결됨", connected = true, notice = "탭해서 듣기 시작\n서버 ws://172.20.10.2:8000/ws", battery = 12)),
         "03_stopped",
     )
 
@@ -92,7 +102,7 @@ class HudViewSnapshotTest {
     )
 }
 
-private val ASSIST_FULL = HudView.Assist("광고 채널", "검색·디스플레이·영상·SNS 광고로 나뉜다. 이번 분기 검색 광고 비중 62%.")
+private val ASSIST_FULL = HudView.Assist("방탄소년단 데뷔", "2013년 6월 13일 데뷔했어요. 데뷔곡은 'No More Dream'입니다.")
 
 /** The same HUD placed on the full 480x640 glasses screen, the way MainActivity lays it out. */
 class HudViewFullScreenSnapshotTest {
