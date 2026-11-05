@@ -19,6 +19,10 @@ object Protocol {
 
     fun stop(): String = JSONObject().put("type", "stop").toString()
 
+    /** Diagnostics: which audio source the glasses use, and whether it only gives zeros. */
+    fun mic(source: String, silent: Boolean): String =
+        JSONObject().put("type", "mic").put("source", source).put("silent", silent).toString()
+
     sealed interface ServerMessage {
         data object Ready : ServerMessage
         data class Level(val rms: Double, val speech: Boolean, val receivedMs: Long) : ServerMessage

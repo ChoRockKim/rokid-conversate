@@ -16,4 +16,14 @@ class MicStreamerTest {
         assertEquals(2, HudView.levelSteps(500.0))
         assertEquals(5, HudView.levelSteps(9000.0))
     }
+
+    @Test fun micIsTriedFirst() {
+        // VOICE_RECOGNITION gave only zeros on the glasses; other Rokid apps use MIC.
+        assertEquals("MIC", MicStreamer.SOURCES.first().name)
+    }
+
+    @Test fun allZeroDetection() {
+        assertEquals(true, MicStreamer.isAllZero(ByteArray(3200)))
+        assertEquals(false, MicStreamer.isAllZero(ByteArray(3200).also { it[1000] = 1 }))
+    }
 }

@@ -75,8 +75,15 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
                 main.post { level = rms; render() }
             },
             onError = { message -> main.post { notice = message; render() } },
+            onSource = { name, silent ->
+                main.post {
+                    // Also tell the server, so its log shows which source the glasses ended up on.
+                    client.sendText(Protocol.mic(name, silent))
+                    onUpdateStatus(if (silent) "마이크 무음 ($name) · 다른 앱이 마이크를 쓰는 중일 수 있음" else "마이크: $name")
+                }
+            },
         )
-        updater = Updater(this, { settings.config }, { main.post(it) })
+        updater =Updater(this, { settings.config }, { main.post(it) })
         updater.listener = this
         notice = setupNotice()
         render()

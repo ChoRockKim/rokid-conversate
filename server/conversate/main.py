@@ -177,6 +177,8 @@ class Session:
                 )
                 return
             await self.send({"type": "ready"})
+        elif kind == "mic":
+            pass  # diagnostics from the glasses (audio source); already logged above
         elif kind == "stop":
             for event in self.segmenter.flush():
                 self._enqueue(event)

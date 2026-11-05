@@ -120,3 +120,12 @@ def test_assist_message_after_enough_speech():
         msg = read_until(ws, lambda m: m["type"] == "assist")
         assert msg["title"] == "요약"
         assert msg["text"].endswith("줄")
+
+
+def test_mic_diagnostics_are_accepted_quietly():
+    with client().websocket_connect("/ws", headers=AUTH) as ws:
+        ws.send_text(json.dumps({"type": "hello"}))
+        ws.receive_text()
+        ws.send_text(json.dumps({"type": "mic", "source": "MIC", "silent": False}))
+        ws.send_text(json.dumps({"type": "hello"}))
+        assert json.loads(ws.receive_text()) == {"type": "ready"}  # no error in between
