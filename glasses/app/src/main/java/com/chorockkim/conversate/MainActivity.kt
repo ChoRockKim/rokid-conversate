@@ -41,7 +41,8 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     private var notice = ""
     private var assist: HudView.Assist? = null
     private var message: String? = null
-    private var lastUpdateCheck = 0L
+    /** Update check runs once per launch (onCreate), at the first server connection. */
+    private var updateChecked = false
     private val clearMessage = Runnable { message = null; render() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -203,10 +204,9 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         connected = state == State.READY
         connectionAlert = (state == State.IDLE || state == State.WAITING_RETRY) && detail.isNotEmpty()
         render()
-        // Check for a new version when the server is reachable: first connection, then every 6 h.
-        val now = System.currentTimeMillis()
-        if (state == State.READY && now - lastUpdateCheck > UPDATE_CHECK_MS) {
-            lastUpdateCheck = now
+        // Check for a new version once per app launch, on the first connection to the server.
+        if (state == State.READY && !updateChecked) {
+            updateChecked = true
             updater.check()
         }
     }
@@ -260,6 +260,5 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     private companion object {
         const val TAG = "Conversate"
         const val REQ_MIC = 1
-        const val UPDATE_CHECK_MS = 6 * 60 * 60 * 1000L
     }
 }

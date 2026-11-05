@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build a release APK signed with the fixed key and (optionally) upload it to the server for OTA.
-# The glasses pick it up by themselves on the next connection (or within 6 h) and install it.
+# The glasses pick it up the next time the app is started and install it by themselves.
 #
 #   scripts/release.sh <versionCode> <versionName> [--upload]
 #

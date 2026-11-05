@@ -89,7 +89,7 @@ adb shell am start -n com.chorockkim.conversate/.MainActivity --es config "'CONV
 export OTA_UPLOAD_TOKEN=...   # Railway 변수 OTA_UPLOAD_TOKEN
 scripts/release.sh 2 0.2.0 --upload   # versionCode 는 매번 올린다
 ```
-- 안경은 서버에 연결될 때와 그 뒤 6시간마다 `/app/latest` 를 확인한다. 새 버전이면 받아서 sha256 을 확인하고 **확인 창 없이 설치**한 뒤 앱을 다시 띄운다 (Android 12 의 `USER_ACTION_NOT_REQUIRED`, 자기 자신 업데이트만 가능).
+- 안경은 **앱을 켤 때 한 번** (켠 뒤 서버에 처음 연결됐을 때) `/app/latest` 를 확인한다. 새 버전이면 받아서 sha256 을 확인하고 **확인 창 없이 설치**한 뒤 앱을 다시 띄운다 (Android 12 의 `USER_ACTION_NOT_REQUIRED`, 자기 자신 업데이트만 가능).
 - 듣는 중이면 끊지 않고, 정지했을 때 설치한다. 진행 상황은 아래 줄에, 받을 버전은 오른쪽 아래 `새 버전 0.2.0`.
 - 위의 `-i` 설치나 `appops` 가 빠졌으면 안드로이드가 설치 확인 창을 띄운다 (그때는 한 번 눌러야 함).
 - 서버 쪽: `PUT /app/upload` (업로드 토큰), `GET /app/latest`·`/app/download` (안경 토큰). APK 는 Railway 볼륨 `/data/ota` 에 하나만 보관.
