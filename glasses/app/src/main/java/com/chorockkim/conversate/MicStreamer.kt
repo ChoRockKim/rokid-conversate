@@ -16,10 +16,10 @@ import kotlin.math.sqrt
  *   0, 1  post-algorithm (AEC / beamforming, most likely aimed at the wearer's mouth)
  *   2..5  raw audio of the 4 microphone capsules
  *   6, 7  echo reference (speaker playback)
- * A plain mono request only got the system's choice, which heard the other person poorly
- * (2026-11-05). So the first source records all 8 channels and mixes the 4 raw capsules (2..5)
- * with a fixed gain: omnidirectional, so the other person is heard too. Per-channel levels are
- * reported every few seconds so the mix can be tuned from server logs.
+ * Measured on the glasses (2026-11-05, 5 s RMS): quiet [1,1, 7,7,8,7] vs speech [217,217, 49..74]:
+ * the processed channel has ~100x speech-to-noise, the raw capsules ~7x. Mixing the raw capsules
+ * (0.1.2-0.1.5) made recognition worse, so the stream now carries processed channel 0, raised 2x.
+ * Per-channel levels are still reported every few seconds so the choice can be revisited.
  *
  * Fallbacks: plain mono MIC, then other sources. VOICE_RECOGNITION gave only zeros on the glasses
  * (owned by the Rokid assistant's wake-word engine), so a source that delivers nothing but zeros
@@ -179,14 +179,14 @@ class MicStreamer(
 
         /** Rokid's 8-channel layout (0,1 processed · 2..5 raw capsules · 6,7 echo reference). */
         const val ROKID_8CH_MASK = 0x6000FC
-        /** The raw capsules are quiet next to the processed channels; 4x (~12 dB) to start with. */
-        const val RAW_MIX_GAIN = 4.0
+        /** Processed channel 0 arrives around RMS 100-600 for speech; 2x (~6 dB). */
+        const val PROCESSED_GAIN = 2.0
 
         val SOURCES = listOf(
             Source(
-                MediaRecorder.AudioSource.MIC, "MIC_8CH_RAW",
+                MediaRecorder.AudioSource.MIC, "MIC_8CH",
                 channelMask = ROKID_8CH_MASK, channels = 8,
-                mixChannels = listOf(2, 3, 4, 5), gain = RAW_MIX_GAIN,
+                mixChannels = listOf(0), gain = PROCESSED_GAIN,
             ),
             Source(MediaRecorder.AudioSource.MIC, "MIC"),
             Source(MediaRecorder.AudioSource.VOICE_RECOGNITION, "VOICE_RECOGNITION"),

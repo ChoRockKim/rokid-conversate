@@ -82,7 +82,7 @@ class HudViewSnapshotTest {
     )
 
     @Test fun waitingForSpeech() = paparazzi.snapshot(
-        hud(HudView.State(connection = "연결됨", connected = true, listening = true, level = 20.0, notice = "말하면 자막이 나옵니다", battery = 12)),
+        hud(HudView.State(connection = "연결됨", connected = true, listening = true, level = 20.0, notice = "", battery = 12)),
         "03_waiting_for_speech",
     )
 

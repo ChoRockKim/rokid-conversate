@@ -216,7 +216,8 @@ class HudView(context: Context) : View(context) {
             right -= 8f + updatePaint.measureText(label)
             canvas.drawText(label, right, BOTTOM_BASELINE, updatePaint)
         }
-        val hint = s.message ?: if (s.scrollBack > 0) "▲ ${s.scrollBack}줄 전 · 앞으로 쓸면 최신" else HINT
+        // No standing guide text: only transient messages and the scroll position.
+        val hint = s.message ?: if (s.scrollBack > 0) "▲ ${s.scrollBack}줄 전" else ""
         val hintPaint = if (s.message != null) updatePaint else tiny
         val hintText = TextUtils.ellipsize(hint, hintPaint, right - MARGIN - 8f, TextUtils.TruncateAt.END)
         canvas.drawText(hintText, 0, hintText.length, MARGIN, BOTTOM_BASELINE, hintPaint)
@@ -383,7 +384,6 @@ class HudView(context: Context) : View(context) {
         const val LEVEL_STEPS = 5
         /** More than ever fit; the view cuts from the top. */
         const val MAX_LINES = 12
-        const val HINT = "쓸기 지난 자막 · 두 번 탭 종료"
 
         /** ~300 is quiet speech, ~3000+ is loud (int16 RMS, same scale as the server). */
         fun levelSteps(rms: Double): Int = when {

@@ -20,10 +20,10 @@ class MicStreamerTest {
     @Test fun sourceOrder() {
         // 8-channel MIC (Rokid layout) first, then plain MIC; VOICE_RECOGNITION gave only zeros.
         val first = MicStreamer.SOURCES.first()
-        assertEquals("MIC_8CH_RAW", first.name)
+        assertEquals("MIC_8CH", first.name)
         assertEquals(0x6000FC, first.channelMask)
         assertEquals(8, Integer.bitCount(first.channelMask))
-        assertEquals(listOf(2, 3, 4, 5), first.mixChannels)
+        assertEquals(listOf(0), first.mixChannels)  // processed channel: far better SNR than raw
         assertEquals("MIC", MicStreamer.SOURCES[1].name)
     }
 

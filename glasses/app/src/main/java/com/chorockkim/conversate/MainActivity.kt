@@ -152,7 +152,7 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     private fun setupNotice(): String {
         val config = settings.config
         return if (config.isComplete) {
-            "말하면 자막이 나옵니다"
+            ""
         } else {
             "서버 주소가 없습니다.\nadb로 설정하세요 (README 참고)"
         }
@@ -208,7 +208,7 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         }
         if (!settings.config.isComplete) return
         mic.start()
-        notice = "말하면 자막이 나옵니다"
+        notice = ""
         render()
     }
 
