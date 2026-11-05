@@ -70,7 +70,7 @@ class OpenAIAssistant:
         if shown:
             prompt += "\n\n이미 보여준 주제: " + ", ".join(shown)
         try:
-            response = self.client.responses.create(
+            raw = self.client.responses.with_raw_response.create(
                 model=self.model,
                 instructions=INSTRUCTIONS,
                 input=prompt,
@@ -80,6 +80,16 @@ class OpenAIAssistant:
             )
         except RateLimitError as e:
             raise RateLimited(retry_after_seconds(str(e), e.response.headers.get("retry-after"))) from e
+        response = raw.parse()
+        usage = getattr(response, "usage", None)
+        # Rate-limit headers show the account's real per-minute limit (it rises with the tier).
+        log.info(
+            "assist: %s tokens in/out %s/%s, TPM limit %s remaining %s, reply %r",
+            self.model,
+            getattr(usage, "input_tokens", "?"), getattr(usage, "output_tokens", "?"),
+            raw.headers.get("x-ratelimit-limit-tokens"), raw.headers.get("x-ratelimit-remaining-tokens"),
+            (response.output_text or "")[:120],
+        )
         return parse_reply(response.output_text)
 
 
