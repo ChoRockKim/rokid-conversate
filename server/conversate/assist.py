@@ -57,11 +57,15 @@ TRIAGE_INSTRUCTIONS = f"""너는 스마트 안경을 쓴 사용자의 대화를 
 {_CRITERIA}
 
 반드시 JSON 하나만 출력한다.
-띄울 때: {{"topic": "찾아서 알려줄 내용을 한 문장 질문으로 (예: 방탄소년단 데뷔일은?)"}}
+띄울 때: {{"topic": "대화만 모르는 사람도 이해할 완전한 질문. 대명사·생략은 대화에서 풀어 쓰고, 끝에 (상황: 지금 무슨 이야기 중인지 한 줄)"}}
+예: {{"topic": "어제 산 운동화 가격 110달러는 원화로 얼마인가? (상황: 해외 직구한 운동화가 비싸다고 이야기 중)"}}
 건너뛸 때: {{"skip": true}}"""
 
 ANSWER_INSTRUCTIONS = """너는 스마트 안경 화면에 짧은 정보를 띄우는 보조다.
-주어진 질문에 정확히 답한다. 환율·가격·최신 사실은 웹 검색으로 확인한다. 대화는 맥락으로만 참고한다.
+주어진 질문에 정확히 답한다. 환율·가격·최신 사실은 웹 검색으로 확인한다.
+질문 끝의 (상황)과 대화 흐름을 보고, 이 대화를 하는 사람에게 지금 가장 쓸모 있는 각도로 답한다.
+예: 산 물건 가격이 비싸다는 이야기라면 원화 환산에 국내 가격과의 비교를 붙이고,
+약속 장소 이야기라면 위치·영업시간을, 사람 이야기라면 대화 주제와 관련된 경력을 고른다.
 대화에 이미 나온 내용은 쓰지 않는다. 대화에 없는 새 사실(숫자, 날짜, 환산 결과 등)만 쓴다.
 환산은 결과를 바로 쓴다 (예: "110달러는 약 15만 원이다(1달러 약 1,380원)").
 백과사전처럼 사실만 쓴다. 사용자에게 말을 걸지 않는다:
@@ -281,7 +285,7 @@ class AssistConfig:
     # A finished caption that looks like a question is asked right away (only this gap).
     question_interval_s: float = 2.0
     # How much of the conversation the model sees.
-    context_lines: int = 12
+    context_lines: int = 20
     # Titles remembered to avoid repeating a topic.
     remember_titles: int = 6
     # Recent topics/answers kept to drop repeats (a topic once answered came back again and
