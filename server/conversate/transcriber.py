@@ -50,12 +50,19 @@ class FasterWhisperTranscriber:
             return self._model
 
     def transcribe(self, audio: np.ndarray, *, partial: bool) -> str:
+        return self._run(audio, partial=partial, language=self.language)
+
+    def transcribe_any_language(self, audio: np.ndarray) -> str:
+        """Partial in whatever language is spoken (used while a foreign speaker is present)."""
+        return self._run(audio, partial=True, language=None)
+
+    def _run(self, audio: np.ndarray, *, partial: bool, language: str | None) -> str:
         model = self._get_model()
         audio = normalize(audio)
         with self._run_lock:
             segments, _info = model.transcribe(
                 audio,
-                language=self.language,
+                language=language,
                 # Partials are thrown away a moment later, so trade accuracy for speed there.
                 beam_size=1 if partial else 5,
                 # The segmenter already cut on silence.
@@ -128,6 +135,10 @@ class HybridTranscriber:
     def __init__(self, local: Transcriber, final: Transcriber) -> None:
         self.local = local
         self.final = final
+
+    def transcribe_any_language(self, audio: np.ndarray) -> str:
+        any_language = getattr(self.local, "transcribe_any_language", None)
+        return any_language(audio) if any_language else self.local.transcribe(audio, partial=True)
 
     def transcribe(self, audio: np.ndarray, *, partial: bool) -> str:
         if partial:

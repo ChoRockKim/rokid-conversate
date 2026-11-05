@@ -165,13 +165,14 @@ def test_foreign_speech_gets_a_translation():
 
 
 def test_foreign_speech_opens_live_translation():
-    import asyncio as _a
-
+    """After the first foreign final, live Korean is attached to our own captions of the next
+    utterance (original from our STT, translation as it streams), then replaced by the text
+    translation of the final."""
     opened = []
 
     class FakeLive:
-        def __init__(self, on_line):
-            self.on_line, self.fed = on_line, 0
+        def __init__(self, on_korean):
+            self.on_korean, self.fed = on_korean, 0
             opened.append(self)
 
         async def start(self):
@@ -179,27 +180,37 @@ def test_foreign_speech_opens_live_translation():
 
         async def feed(self, pcm):
             self.fed += 1
-            if self.fed == 3:
-                await self.on_line("How much is", "얼마", False)
-                await self.on_line("How much is this?", "이거 얼마예요?", True)
+            if self.fed == 2:
+                await self.on_korean("이거")
+                await self.on_korean(" 얼마예요?")
 
         async def stop(self):
             pass
 
     class English:
         def transcribe(self, audio, *, partial):
-            return "Where is the station?"
+            return "How much is this?"
 
-    with client(stt=English(), live_factory=FakeLive).websocket_connect("/ws", headers=AUTH) as ws:
+        def transcribe_any_language(self, audio):
+            return "How much"
+
+    class Tr:
+        def translate(self, text):
+            return "이것은 얼마입니까?"
+
+    with client(stt=English(), live_factory=FakeLive, translator=Tr()).websocket_connect("/ws", headers=AUTH) as ws:
         ws.send_text(json.dumps({"type": "hello"}))
         ws.receive_text()
         ws.send_bytes(silence(500) + tone(800))
         ws.send_text(json.dumps({"type": "stop"}))
-        read_until(ws, lambda m: m["type"] == "caption" and m["final"])
-        # live session is open now; more audio flows into it
-        for _ in range(5):
-            ws.send_bytes(silence(100))
-        live = read_until(ws, lambda m: m["type"] == "caption" and m["id"] >= 1_000_000 and m["final"])
-        assert live["text"] == "How much is this?"
-        assert live["translation"] == "이거 얼마예요?"
+        first = read_until(ws, lambda m: m["type"] == "caption" and m["final"])
+        # live session is open now; the next utterance streams into it
+        ws.send_bytes(silence(500))
+        ws.send_bytes(tone(800))
+        ws.send_text(json.dumps({"type": "stop"}))
+        live = read_until(ws, lambda m: m["type"] == "caption" and m.get("translation") == "이거 얼마예요?")
+        assert live["id"] > first["id"]
+        final = read_until(ws, lambda m: m["type"] == "caption" and m["id"] == live["id"] and m["final"]
+                           and m.get("translation") == "이것은 얼마입니까?")
+        assert final["text"] == "How much is this?"
     assert len(opened) == 1

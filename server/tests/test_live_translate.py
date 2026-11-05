@@ -3,7 +3,7 @@ import json
 
 import numpy as np
 
-from conversate.live_translate import LiveLine, LiveTranslator, resample_16k_to_24k
+from conversate.live_translate import KoreanJoiner, LiveTranslator, resample_16k_to_24k
 
 
 def test_resample_length_and_shape():
@@ -13,15 +13,11 @@ def test_resample_length_and_shape():
     assert abs(int(y.max()) - 1000) < 20
 
 
-def test_live_line_closes_on_sentence_end():
-    line = LiveLine()
-    line.add_source("Where is ")
-    line.add_korean("어디")
-    assert not line.should_close()
-    line.add_source("the station?")
-    line.add_korean("역이 어디예요?")
-    assert line.should_close()
-    assert line.take() == ("Where is the station?", "어디역이 어디예요?")
+def test_joiner_restores_space_after_pause():
+    j = KoreanJoiner()
+    pieces = [j.add("써봤", 0.0), j.add("는데요", 0.05), j.add("제가", 0.6), j.add(" 여러분", 0.65),
+              j.add("?", 1.5), j.add("네", 2.5)]
+    assert "".join(pieces) == "써봤는데요 제가 여러분? 네"
 
 
 class FakeWs:
@@ -45,37 +41,30 @@ class FakeWs:
 
 def test_session_flow():
     async def main():
-        lines = []
+        pieces = []
 
-        async def on_line(src, ko, final):
-            lines.append((src, ko, final))
+        async def on_korean(piece):
+            pieces.append(piece)
 
         ws = FakeWs([
             {"type": "session.input_transcript.delta", "delta": "Hello"},
-            {"type": "session.output_transcript.delta", "delta": "안녕하세요"},
-            {"type": "session.input_transcript.delta", "delta": "."},
-            {"type": "session.output_transcript.delta", "delta": "."},
+            {"type": "session.output_transcript.delta", "delta": "안녕"},
+            {"type": "session.output_transcript.delta", "delta": "하세요."},
             {"type": "session.closed"},
         ])
 
         async def connect():
             return ws
 
-        lt = LiveTranslator(on_line, connect=connect)
+        lt = LiveTranslator(on_korean, connect=connect)
         await lt.start()
         await lt.feed(np.zeros(1600, dtype="<i2").tobytes())
         await asyncio.wait_for(lt.closed.wait(), 1)
         await lt.stop()
         kinds = [m["type"] for m in ws.sent]
-        assert kinds[0] == "session.update" and kinds[1] == "session.update"
+        assert kinds[0] == "session.update"
         assert ws.sent[0]["session"]["audio"]["output"]["language"] == "ko"
         assert "session.input_audio_buffer.append" in kinds
-        assert lines[-1] == ("Hello.", "안녕하세요.", True)
+        assert "".join(pieces) == "안녕하세요."
 
     asyncio.run(main())
-
-
-def test_translation_only_line_closes_on_its_sentence_end():
-    line = LiveLine()
-    line.add_korean("이거 얼마예요?")
-    assert line.should_close()
