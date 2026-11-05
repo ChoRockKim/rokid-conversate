@@ -58,6 +58,11 @@ export OPENAI_API_KEY=sk-...                       # 위쪽 AI 결과용 (없으
 - 안경 없이 점검: `ffmpeg -i 녹음.m4a -ar 16000 -ac 1 -sample_fmt s16 a.wav` 후
   `.venv/bin/python tools/send_wav.py a.wav --url ws://localhost:8000/ws` (실시간 속도로 보내고 자막을 출력)
 
+### 배포 (Railway)
+Railway 프로젝트 `rokid-conversate` → 서비스 `server` (GitHub `main` 의 `/server` 를 Dockerfile 로 빌드, `server/**` 가 바뀌면 다시 배포).
+주소: `wss://server-production-24bc.up.railway.app/ws`, 헬스체크 `/health`.
+변수: `CONVERSATE_TOKEN`, `WHISPER_MODEL=small`, `WHISPER_LANGUAGE=ko`, `ASSIST_MODEL`, `ASSIST_WEB_SEARCH`. AI 영역을 켜려면 `OPENAI_API_KEY` 를 대시보드에서 추가.
+
 ### 2. 안경 앱
 ```bash
 cd glasses
