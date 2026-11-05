@@ -299,3 +299,13 @@ def test_new_lines_are_marked_and_repeats_are_dropped():
         assert sent == ["방탄소년단 데뷔"]  # the same topic again is not shown twice
 
     run(main())
+
+
+def test_restates_detects_answers_that_add_nothing():
+    from conversate.assist import restates
+
+    convo = ["[새] 이 신발 110달러더라", "회의는 3시에 시작해요"]
+    assert restates("회의는 3시에 시작합니다.", convo)  # a line of the conversation again
+    assert restates("신발 110달러", convo)  # only numbers already said
+    assert not restates("110달러는 약 15만 원이다(1달러 약 1,380원).", convo)  # adds the conversion
+    assert not restates("방탄소년단은 2013년 6월 13일 데뷔했다.", ["방탄소년단 언제 데뷔했더라"])

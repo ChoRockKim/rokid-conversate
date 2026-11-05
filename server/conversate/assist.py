@@ -36,11 +36,14 @@ class Assistant(Protocol):
         ...
 
 
-_CRITERIA = """대화에 도움이 되는 정보가 있으면 답한다. 이런 경우에 답한다:
+_CRITERIA = """대화를 듣는 사람에게 도움이 될 새 정보가 있으면 적극적으로 알려준다. 이런 경우에 답한다:
+- 금액·단위·시간 환산: 외화 금액은 현재 환율로 원화(예: "110달러" -> 약 몇 원), 마일·파운드·화씨 등은
+  미터법으로, 다른 나라 시각은 한국 시각으로
 - 누군가 묻거나 궁금해하는 사실 (날짜, 수치, 가격, 인물, 장소, 정의, 방법 등). 혼잣말 같은 질문도 포함
 - 전문 용어·약어·신조어, 또는 한 번 설명해 주면 좋을 개념
-- 대화에 나온 사람·회사·제품·작품·장소에 대한 유용한 사실 (유명해도 대화 맥락에 맞는 구체적 정보가 있으면)
-- 대화 속 수치나 사실 주장을 확인해 줄 수 있을 때
+- 대화에 나온 사람·회사·제품·작품·장소·사건에 대한 유용한 최신 사실 (가격, 출시일, 위치, 영업시간, 평가 등)
+- 대화 속 수치나 사실 주장이 틀렸거나 확인이 필요할 때
+핵심: 대화에 이미 나온 내용을 되풀이하거나 요약하는 것은 정보가 아니다. 대화에 없는 새 사실을 더할 수 있을 때만 답한다.
 다음은 건너뛴다:
 - 인사, 잡담, 감탄, "잘 들려?" 같은 확인, 의견·감정 표현만 있을 때
 - 회의, 예산, 밥 같은 일상 단어 자체의 뜻
@@ -58,7 +61,9 @@ TRIAGE_INSTRUCTIONS = f"""너는 스마트 안경을 쓴 사용자의 대화를 
 건너뛸 때: {{"skip": true}}"""
 
 ANSWER_INSTRUCTIONS = """너는 스마트 안경 화면에 짧은 정보를 띄우는 보조다.
-주어진 질문에 정확히 답한다 (필요하면 웹 검색). 대화는 맥락으로만 참고한다.
+주어진 질문에 정확히 답한다. 환율·가격·최신 사실은 웹 검색으로 확인한다. 대화는 맥락으로만 참고한다.
+대화에 이미 나온 내용은 쓰지 않는다. 대화에 없는 새 사실(숫자, 날짜, 환산 결과 등)만 쓴다.
+환산은 결과를 바로 쓴다 (예: "110달러는 약 15만 원이다(1달러 약 1,380원)").
 백과사전처럼 사실만 쓴다. 사용자에게 말을 걸지 않는다:
 인사, 되묻기, 제안("~해 보세요"), 공감("궁금하시군요"), 감탄, 대화 내용 요약은 쓰지 않는다.
 문장은 "~이다" 또는 "~입니다"로 끝낸다.
@@ -189,6 +194,20 @@ def similar(a: str, b: str, threshold: float = 0.6) -> bool:
     if x in y or y in x:
         return True
     return difflib.SequenceMatcher(None, x, y).ratio() >= threshold
+
+
+def restates(answer: str, conversation: list[str], threshold: float = 0.7) -> bool:
+    """True when the answer adds nothing: it is (nearly) a line of the conversation, or every
+    number in it was already said."""
+    lines = [re.sub(r"^\[새\]\s*", "", line) for line in conversation]
+    if any(similar(answer, line, threshold) for line in lines):
+        return True
+    numbers = set(re.findall(r"\d[\d,.]*", answer))
+    said = set(re.findall(r"\d[\d,.]*", " ".join(lines)))
+    words = set(re.findall(r"[가-힣A-Za-z]{2,}", answer))
+    said_words = set(re.findall(r"[가-힣A-Za-z]{2,}", " ".join(lines)))
+    new_words = words - said_words
+    return bool(numbers) and numbers <= said and len(new_words) <= 2
 
 
 def parse_topic(text: str) -> str | None:
@@ -367,6 +386,9 @@ class AssistEngine:
             result = None
         if busy:
             await self._busy(False)
+        if result is not None and restates(result.text, list(self.lines)):
+            log.info("assist: answer %r only restates the conversation, dropped", result.text)
+            result = None
         if result is not None and (self._seen(result.title) or self._seen(result.text)):
             log.info("assist: answer %r repeats a recent one, dropped", result.title)
             result = None

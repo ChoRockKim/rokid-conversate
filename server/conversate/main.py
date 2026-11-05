@@ -121,7 +121,8 @@ class Session:
         self.finals: deque[Event] = deque()
         self.partial: Event | None = None
         self.last_final_id = 0
-        self.work = asyncio.Event()
+        self.final_work = asyncio.Event()
+        self.partial_work = asyncio.Event()
         self.received_samples = 0
         self.send_lock = asyncio.Lock()
         self.stat_rms: list[float] = []
@@ -231,52 +232,73 @@ class Session:
         if event.kind == "final":
             self.finals.append(event)
             self.partial = None
+            self.final_work.set()
         else:
             # Only the newest partial matters; an older one still waiting is stale.
             self.partial = event
-        self.work.set()
+            self.partial_work.set()
 
     async def _transcribe_loop(self) -> None:
+        """Finals and partials run as two independent workers. With one loop, a final waiting on
+        the OpenAI call (1-2 s) held up every partial behind it, and a slow local partial on a
+        long utterance held up the final: captions stalled, then arrived in a burst."""
+        await asyncio.gather(self._final_loop(), self._partial_loop())
+
+    async def _final_loop(self) -> None:
         while True:
-            await self.work.wait()
-            self.work.clear()
-            while self.finals or self.partial:
-                if self.finals:
-                    event = self.finals.popleft()
-                else:
-                    event, self.partial = self.partial, None
-                    if event.segment_id <= self.last_final_id:
-                        continue
-                try:
-                    text = await asyncio.to_thread(
-                        self.stt.transcribe, event.audio, partial=event.kind == "partial"
-                    )
-                except Exception as exc:  # keep the session alive if one call fails
-                    log.exception("transcription failed")
-                    await self.send({"type": "error", "message": f"transcription failed: {exc}"})
+            await self.final_work.wait()
+            self.final_work.clear()
+            while self.finals:
+                event = self.finals.popleft()
+                text = await self._run_stt(event)
+                if text is None:
                     continue
-                final = event.kind == "final"
-                if final:
-                    self.last_final_id = event.segment_id
-                elif event.segment_id <= self.last_final_id:
+                self.last_final_id = max(self.last_final_id, event.segment_id)
+                await self._deliver(event, text, final=True)
+
+    async def _partial_loop(self) -> None:
+        while True:
+            await self.partial_work.wait()
+            self.partial_work.clear()
+            while self.partial is not None:
+                event, self.partial = self.partial, None
+                if event.segment_id <= self.last_final_id:
+                    continue
+                text = await self._run_stt(event)
+                if text is None or event.segment_id <= self.last_final_id:
                     continue  # the final for this utterance overtook us
-                foreign = bool(final and text and needs_translation(text))
-                if self.live is not None and (not final or foreign):
-                    # Live translation is on: it already shows foreign speech as it is spoken.
-                    # Skip the Korean-only Whisper partials and this foreign final (duplicates).
-                    if foreign:
-                        self.live_until = time.monotonic() + LIVE_IDLE_S
-                else:
-                    if text or final:
-                        await self.send(
-                            {"type": "caption", "id": event.segment_id, "text": text, "final": final}
-                        )
-                    if foreign and self.translator is not None:
-                        asyncio.create_task(self._translate(event.segment_id, text))
-                    if foreign:
-                        await self._start_live()
-                if final and text and self.assist is not None:
-                    self.assist.on_final(text)
+                await self._deliver(event, text, final=False)
+
+    async def _run_stt(self, event: Event) -> str | None:
+        started = time.monotonic()
+        try:
+            text = await asyncio.to_thread(self.stt.transcribe, event.audio, partial=event.kind == "partial")
+        except Exception as exc:  # keep the session alive if one call fails
+            log.exception("transcription failed")
+            await self.send({"type": "error", "message": f"transcription failed: {exc}"})
+            return None
+        log.info(
+            "stt %s #%d: %.1fs audio in %.2fs", event.kind, event.segment_id,
+            len(event.audio) / SAMPLE_RATE, time.monotonic() - started,
+        )
+        return text
+
+    async def _deliver(self, event: Event, text: str, *, final: bool) -> None:
+        foreign = bool(final and text and needs_translation(text))
+        if self.live is not None and (not final or foreign):
+            # Live translation is on: it already shows foreign speech as it is spoken.
+            # Skip the Korean-only Whisper partials and this foreign final (duplicates).
+            if foreign:
+                self.live_until = time.monotonic() + LIVE_IDLE_S
+        else:
+            if text or final:
+                await self.send({"type": "caption", "id": event.segment_id, "text": text, "final": final})
+            if foreign and self.translator is not None:
+                asyncio.create_task(self._translate(event.segment_id, text))
+            if foreign:
+                await self._start_live()
+        if final and text and self.assist is not None:
+            self.assist.on_final(text)
 
     async def _start_live(self) -> None:
         self.live_until = time.monotonic() + LIVE_IDLE_S
