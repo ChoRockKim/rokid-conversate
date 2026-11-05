@@ -57,7 +57,7 @@ def test_two_utterances_have_increasing_ids():
 
 
 def test_partials_during_long_speech_then_final():
-    seg = Segmenter(SegmenterConfig(partial_every_ms=1000))
+    seg = Segmenter(SegmenterConfig(partial_every_ms=1000, long_after_ms=60_000))
     events = feed_all(seg, silence(500), tone(3500), silence(1000))
     kinds = [e.kind for e in events]
     # 3.5 s of speech plus the 0.7 s of silence before the cut, one partial per second
@@ -108,3 +108,17 @@ def test_webrtc_vad_ignores_steady_tone_and_hiss():
     seg = Segmenter(_Config())
     assert seg.feed(silence(2000, amplitude=40)) == []
     assert seg.flush() == []
+
+
+def test_long_talk_is_cut_at_short_pauses():
+    seg = Segmenter(SegmenterConfig(partial_every_ms=0))
+    # 5 s of talk, a 400 ms breath (shorter than the normal 700 ms end), 3 s more talk.
+    events = feed_all(seg, silence(500), tone(5000), silence(400), tone(3000), silence(1000))
+    finals = [e for e in events if e.kind == "final"]
+    assert len(finals) == 2
+
+
+def test_short_talk_still_needs_the_normal_pause():
+    seg = Segmenter(SegmenterConfig(partial_every_ms=0))
+    events = feed_all(seg, silence(500), tone(2000), silence(400), tone(1500), silence(1000))
+    assert len([e for e in events if e.kind == "final"]) == 1

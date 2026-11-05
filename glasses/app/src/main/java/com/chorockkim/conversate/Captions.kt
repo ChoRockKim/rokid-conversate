@@ -32,14 +32,51 @@ class Captions(private val maxFinals: Int = 50) {
         }
     }
 
-    /** Lines to draw, oldest first, ending at the newest (or at the scrolled-back position). */
+    /**
+     * Lines to draw, oldest first, ending at the newest (or at the scrolled-back position).
+     * Long utterances are split into display-sized pieces ([chunk]), so a long sentence shows as
+     * a few short lines instead of one block; [count] counts those pieces.
+     */
     fun visible(count: Int): List<Line> {
-        if (scrollBack > 0) {
+        val source = if (scrollBack > 0) {
             val end = finals.size - scrollBack
-            return finals.toList().subList((end - count).coerceAtLeast(0), end)
+            finals.toList().subList((end - count).coerceAtLeast(0), end)
+        } else {
+            finals.toList().takeLast(count) + listOfNotNull(partial)
         }
-        val all = finals.toList() + listOfNotNull(partial)
-        return all.takeLast(count)
+        return source.flatMap { line -> chunk(line.text).map { Line(line.id, it, line.final) } }.takeLast(count)
+    }
+
+    companion object {
+        /** About one row of caption text on the HUD (444 logical px at 13 sp). */
+        const val CHUNK_CHARS = 32
+
+        /**
+         * Splits [text] into pieces of at most [max] characters: first after sentence ends and
+         * commas, then at spaces; a single word longer than [max] is cut as is.
+         */
+        fun chunk(text: String, max: Int = CHUNK_CHARS): List<String> {
+            val clauses = text.trim().split(Regex("(?<=[.?!。？！,，])\\s+")).filter { it.isNotBlank() }
+            val out = mutableListOf<String>()
+            for (clause in clauses) {
+                var current = ""
+                for (word in clause.split(Regex("\\s+")).filter { it.isNotEmpty() }) {
+                    val candidate = if (current.isEmpty()) word else "$current $word"
+                    when {
+                        candidate.length <= max -> current = candidate
+                        current.isNotEmpty() && word.length <= max -> { out += current; current = word }
+                        else -> {
+                            // A word longer than a row: hard-cut it.
+                            var rest = candidate
+                            while (rest.length > max) { out += rest.take(max); rest = rest.drop(max).trimStart() }
+                            current = rest
+                        }
+                    }
+                }
+                if (current.isNotEmpty()) out += current
+            }
+            return out
+        }
     }
 
     fun scrollOlder() {

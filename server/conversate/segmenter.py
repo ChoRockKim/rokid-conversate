@@ -38,8 +38,12 @@ class SegmenterConfig:
     end_silence_ms: int = 700
     # Drop utterances shorter than this (coughs, clicks).
     min_speech_ms: int = 300
-    # Force a cut so one long monologue still produces final captions.
-    max_segment_ms: int = 15_000
+    # Once an utterance is this long, a shorter pause is enough to end it, so long talk comes
+    # out in caption-sized pieces (cut at a breath rather than mid-word) ...
+    long_after_ms: int = 4_000
+    long_end_silence_ms: int = 300
+    # ... and a hard cut so one long monologue still produces final captions.
+    max_segment_ms: int = 8_000
     # Ask for a partial transcript every this much new audio inside an utterance (0 = never).
     partial_every_ms: int = 1_500
     # Audio kept from before speech started, so the first syllable is not clipped.
@@ -139,7 +143,10 @@ class Segmenter:
         else:
             st.silence_frames += 1
 
-        if st.silence_frames >= self._frames(cfg.end_silence_ms):
+        end_silence = (
+            cfg.long_end_silence_ms if len(st.speech) >= self._frames(cfg.long_after_ms) else cfg.end_silence_ms
+        )
+        if st.silence_frames >= self._frames(end_silence):
             return self._finish()
         if len(st.speech) >= self._frames(cfg.max_segment_ms):
             return self._finish()

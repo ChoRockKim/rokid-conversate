@@ -65,4 +65,33 @@ class CaptionsTest {
         (1..5).forEach { c.apply(Caption(it, "줄 $it", true)) }
         assertEquals(listOf("줄 3", "줄 4", "줄 5"), c.texts())
     }
+
+    @Test fun longSentenceIsSplitIntoRows() {
+        val text = "안녕하세요. 오늘 회의에서는 다음 분기 마케팅 예산을 논의하겠습니다. 첫 번째 안건은 광고 채널 정리입니다."
+        val pieces = Captions.chunk(text)
+        assertEquals(listOf("안녕하세요.", "오늘 회의에서는 다음 분기 마케팅 예산을 논의하겠습니다.", "첫 번째 안건은 광고 채널 정리입니다."), pieces)
+        assertTrue(pieces.all { it.length <= Captions.CHUNK_CHARS })
+    }
+
+    @Test fun noPunctuationSplitsAtSpaces() {
+        val text = "그래서 이번 분기에는 검색 광고를 줄이고 영상 광고 비중을 늘리는 쪽으로 제안드립니다 그리고 다음 달부터"
+        val pieces = Captions.chunk(text, max = 20)
+        assertTrue(pieces.size >= 3)
+        assertTrue(pieces.all { it.length <= 20 })
+        assertEquals(text, pieces.joinToString(" "))
+    }
+
+    @Test fun overlongWordIsCut() {
+        assertEquals(listOf("abcde", "fghij", "k"), Captions.chunk("abcdefghijk", max = 5))
+    }
+
+    @Test fun visibleCountsPiecesAndMarksOnlyNewestPartial() {
+        val c = Captions()
+        c.apply(Caption(1, "짧은 말", true))
+        c.apply(Caption(2, "안녕하세요. 오늘 회의는 여기까지입니다.", false))
+        val lines = c.visible(10)
+        assertEquals(listOf("짧은 말", "안녕하세요.", "오늘 회의는 여기까지입니다."), lines.map { it.text })
+        assertEquals(listOf(true, false, false), lines.map { it.final })
+        assertEquals(listOf("오늘 회의는 여기까지입니다."), c.visible(1).map { it.text })
+    }
 }
