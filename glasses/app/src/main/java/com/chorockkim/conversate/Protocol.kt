@@ -24,9 +24,9 @@ object Protocol {
         JSONObject().put("type", "mic").put("source", source).put("silent", silent).toString()
 
     /** Diagnostics: RMS per microphone channel over the last few seconds (multichannel sources). */
-    fun micLevels(source: String, levels: List<Int>): String =
+    fun micLevels(source: String, levels: List<Int>, rawShare: Int): String =
         JSONObject().put("type", "mic").put("source", source)
-            .put("levels", org.json.JSONArray(levels)).toString()
+            .put("levels", org.json.JSONArray(levels)).put("raw_share", rawShare).toString()
 
     sealed interface ServerMessage {
         data object Ready : ServerMessage

@@ -20,10 +20,11 @@ class MicStreamerTest {
     @Test fun sourceOrder() {
         // 8-channel MIC (Rokid layout) first, then plain MIC; VOICE_RECOGNITION gave only zeros.
         val first = MicStreamer.SOURCES.first()
-        assertEquals("MIC_8CH", first.name)
+        assertEquals("MIC_8CH_AUTO", first.name)
         assertEquals(0x6000FC, first.channelMask)
         assertEquals(8, Integer.bitCount(first.channelMask))
-        assertEquals(listOf(0), first.mixChannels)  // processed channel: far better SNR than raw
+        assertEquals(listOf(0), first.mixChannels)  // processed: the wearer, clean
+        assertEquals(listOf(2, 3, 4, 5), first.altChannels)  // raw capsules: the other person
         assertEquals("MIC", MicStreamer.SOURCES[1].name)
     }
 
@@ -64,5 +65,14 @@ class MicStreamerTest {
     @Test fun allZeroDetection() {
         assertEquals(true, MicStreamer.isAllZero(ByteArray(3200)))
         assertEquals(false, MicStreamer.isAllZero(ByteArray(3200).also { it[1000] = 1 }))
+    }
+
+    @Test fun picksRawWhenTheOtherPersonSpeaks() {
+        // levels after gain, from the glasses logs
+        assertEquals(false, MicStreamer.pickAlt(primaryRms = 2 * 203.0, altRms = 4 * 55.0, wasAlt = false)) // wearer
+        assertEquals(true, MicStreamer.pickAlt(primaryRms = 2 * 9.0, altRms = 4 * 36.0, wasAlt = false))   // other person
+        // near-ties keep the current side
+        assertEquals(true, MicStreamer.pickAlt(primaryRms = 110.0, altRms = 100.0, wasAlt = true))
+        assertEquals(false, MicStreamer.pickAlt(primaryRms = 100.0, altRms = 110.0, wasAlt = false))
     }
 }

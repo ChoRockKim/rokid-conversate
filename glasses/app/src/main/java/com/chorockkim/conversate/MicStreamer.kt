@@ -18,7 +18,9 @@ import kotlin.math.sqrt
  *   6, 7  echo reference (speaker playback)
  * Measured on the glasses (2026-11-05, 5 s RMS): quiet [1,1, 7,7,8,7] vs speech [217,217, 49..74]:
  * the processed channel has ~100x speech-to-noise, the raw capsules ~7x. Mixing the raw capsules
- * (0.1.2-0.1.5) made recognition worse, so the stream now carries processed channel 0, raised 2x.
+ * (0.1.2-0.1.5) made recognition worse; processed only (0.1.6) lost the other person, whom the
+ * beamformer treats as noise. So every 100 ms chunk carries whichever is louder after gain:
+ * processed x2 (the wearer) or the raw capsules x4 (everyone else).
  * Per-channel levels are still reported every few seconds so the choice can be revisited.
  *
  * Fallbacks: plain mono MIC, then other sources. VOICE_RECOGNITION gave only zeros on the glasses
@@ -30,8 +32,11 @@ class MicStreamer(
     private val onError: (String) -> Unit,
     /** Which source is in use and whether it is still silent (all zeros) after probing. */
     private val onSource: (name: String, silent: Boolean) -> Unit = { _, _ -> },
-    /** Multichannel sources: RMS per channel over the last [LEVEL_REPORT_CHUNKS] chunks. */
-    private val onChannelLevels: (name: String, levels: List<Int>) -> Unit = { _, _ -> },
+    /**
+     * Multichannel sources: RMS per channel over the last [LEVEL_REPORT_CHUNKS] chunks, and the
+     * share (0..100) of chunks where the raw capsules were picked over the processed channel.
+     */
+    private val onChannelLevels: (name: String, levels: List<Int>, rawShare: Int) -> Unit = { _, _, _ -> },
 ) {
     @Volatile private var running = false
     private var thread: Thread? = null
@@ -112,6 +117,8 @@ class MicStreamer(
             val buffer = ByteArray(chunkBytes)
             val levelSums = DoubleArray(source.channels)
             var levelChunks = 0
+            var altChunks = 0
+            var useAlt = false
             var chunks = 0
             var heardSomething = false
             var reportedSilent = false
@@ -129,12 +136,23 @@ class MicStreamer(
 
                 val mono = if (source.channels == 1) buffer.copyOf() else {
                     channelRms(buffer, source.channels).forEachIndexed { i, r -> levelSums[i] += r * r }
+                    val primary = mix(buffer, source.channels, source.mixChannels, source.gain)
+                    val picked = if (source.altChannels.isEmpty()) primary else {
+                        val alt = mix(buffer, source.channels, source.altChannels, source.altGain)
+                        useAlt = pickAlt(rms(primary), rms(alt), useAlt)
+                        if (useAlt) alt else primary
+                    }
+                    if (useAlt) altChunks++
                     if (++levelChunks >= LEVEL_REPORT_CHUNKS) {
-                        onChannelLevels(source.name, levelSums.map { sqrt(it / levelChunks).roundToInt() })
+                        onChannelLevels(
+                            source.name, levelSums.map { sqrt(it / levelChunks).roundToInt() },
+                            altChunks * 100 / levelChunks,
+                        )
                         levelSums.fill(0.0)
                         levelChunks = 0
+                        altChunks = 0
                     }
-                    mix(buffer, source.channels, source.mixChannels, source.gain)
+                    picked
                 }
                 onChunk(mono, rms(mono))
                 chunks++
@@ -166,6 +184,9 @@ class MicStreamer(
         /** Channels averaged into the mono stream (multichannel sources). */
         val mixChannels: List<Int> = listOf(0),
         val gain: Double = 1.0,
+        /** If set, every chunk the louder of [mixChannels]x[gain] and these x[altGain] is sent. */
+        val altChannels: List<Int> = emptyList(),
+        val altGain: Double = 1.0,
     )
 
     companion object {
@@ -179,14 +200,28 @@ class MicStreamer(
 
         /** Rokid's 8-channel layout (0,1 processed · 2..5 raw capsules · 6,7 echo reference). */
         const val ROKID_8CH_MASK = 0x6000FC
-        /** Processed channel 0 arrives around RMS 100-600 for speech; 2x (~6 dB). */
+        /** Processed channel 0 arrives around RMS 100-600 for the wearer's speech; 2x (~6 dB). */
         const val PROCESSED_GAIN = 2.0
+        /** Raw capsules are ~4x quieter than the processed channel for the same voice. */
+        const val RAW_GAIN = 4.0
+        /** Switch sides only when the other one is clearly louder (no flapping on near-ties). */
+        const val SWITCH_RATIO = 1.25
+
+        /**
+         * Picks the raw capsules (true) or the processed channel (false) for one chunk. The
+         * processed channel is beamformed toward the wearer and noise-suppressed: clean for the
+         * wearer, but it wipes out the other person (measured 2026-11-05: raw 36-45 vs processed
+         * 9-30 while the other person spoke, Whisper heard nothing).
+         */
+        fun pickAlt(primaryRms: Double, altRms: Double, wasAlt: Boolean): Boolean =
+            if (wasAlt) altRms * SWITCH_RATIO >= primaryRms else altRms > primaryRms * SWITCH_RATIO
 
         val SOURCES = listOf(
             Source(
-                MediaRecorder.AudioSource.MIC, "MIC_8CH",
+                MediaRecorder.AudioSource.MIC, "MIC_8CH_AUTO",
                 channelMask = ROKID_8CH_MASK, channels = 8,
                 mixChannels = listOf(0), gain = PROCESSED_GAIN,
+                altChannels = listOf(2, 3, 4, 5), altGain = RAW_GAIN,
             ),
             Source(MediaRecorder.AudioSource.MIC, "MIC"),
             Source(MediaRecorder.AudioSource.VOICE_RECOGNITION, "VOICE_RECOGNITION"),

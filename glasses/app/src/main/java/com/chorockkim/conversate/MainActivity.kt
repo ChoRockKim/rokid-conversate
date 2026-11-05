@@ -58,6 +58,9 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     /** Update check runs once per launch (onCreate), at the first server connection. */
     private var updateChecked = false
     private val clearMessage = Runnable { message = null; render() }
+    /** The AI card disappears [ASSIST_HIDE_MS] after it arrives; ring/touch input shows it again. */
+    private var assistHidden = false
+    private val hideAssist = Runnable { assistHidden = true; render() }
     /** Captions disappear after [CAPTION_HIDE_MS] without new speech or input. */
     private var captionsHidden = false
     private val hideCaptions = Runnable {
@@ -103,8 +106,8 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
                     onUpdateStatus(if (silent) "마이크 무음 ($name) · 다른 앱이 마이크를 쓰는 중일 수 있음" else "마이크: $name")
                 }
             },
-            onChannelLevels = { name, levels ->
-                main.post { client.sendText(Protocol.micLevels(name, levels)) }
+            onChannelLevels = { name, levels, rawShare ->
+                main.post { client.sendText(Protocol.micLevels(name, levels, rawShare)) }
             },
         )
         updater =Updater(this, { settings.config }, { main.post(it) })
@@ -175,7 +178,8 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     private fun handle(action: GlassesInput.Action) {
         if (action == GlassesInput.Action.DUPLICATE || action == GlassesInput.Action.NONE) return
         // While captions are hidden, a tap or a slide only brings them back.
-        if (captionsHidden && action != GlassesInput.Action.BACK) {
+        if ((captionsHidden || assistHidden) && action != GlassesInput.Action.BACK) {
+            if (assist != null) showAssist()
             showCaptions()
             return
         }
@@ -194,6 +198,14 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         captionsHidden = false
         main.removeCallbacks(hideCaptions)
         main.postDelayed(hideCaptions, CAPTION_HIDE_MS)
+        render()
+    }
+
+    /** Shows the AI card and hides it again after [ASSIST_HIDE_MS]. */
+    private fun showAssist() {
+        assistHidden = false
+        main.removeCallbacks(hideAssist)
+        main.postDelayed(hideAssist, ASSIST_HIDE_MS)
         render()
     }
 
@@ -280,8 +292,10 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
                 if (message.text.isNotBlank()) return showCaptions()
             }
             is Protocol.ServerMessage.Error -> notice = "서버 오류: ${message.message}"
-            is Protocol.ServerMessage.Assist ->
+            is Protocol.ServerMessage.Assist -> {
                 assist = if (message.text.isBlank()) null else HudView.Assist(message.title, message.text)
+                if (assist != null) return showAssist()
+            }
             is Protocol.ServerMessage.AssistStatus -> assistBusy = message.busy
             else -> return
         }
@@ -301,7 +315,7 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
             scrollBack = captions.scrollBack,
             // The idle hint goes away with the captions; errors stay.
             notice = if (captionsHidden && notice == setupNotice()) "" else notice,
-            assist = assist,
+            assist = if (assistHidden) null else assist,
             assistBusy = assistBusy && connected,
             message = message,
             battery = battery,
@@ -314,5 +328,6 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         const val TAG = "Conversate"
         const val REQ_MIC = 1
         const val CAPTION_HIDE_MS = 10_000L
+        const val ASSIST_HIDE_MS = 8_000L
     }
 }
