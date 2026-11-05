@@ -22,7 +22,7 @@ import com.chorockkim.conversate.ConversateClient.State
  *
  * Input (touchpad, R08 ring with or without R08 Access Bridge):
  *   forward/back = newer/older captions, back (double tap) = back to live captions if scrolled,
- *   otherwise exit. Tap does nothing.
+ *   otherwise exit. Captions hide after 10 s without speech; any tap or slide brings them back.
  */
 class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     private val main = Handler(Looper.getMainLooper())
@@ -58,6 +58,13 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     /** Update check runs once per launch (onCreate), at the first server connection. */
     private var updateChecked = false
     private val clearMessage = Runnable { message = null; render() }
+    /** Captions disappear after [CAPTION_HIDE_MS] without new speech or input. */
+    private var captionsHidden = false
+    private val hideCaptions = Runnable {
+        captionsHidden = true
+        captions.backToLive()
+        render()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -116,6 +123,7 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
 
     override fun onResume() {
         super.onResume()
+        showCaptions()
         // Sticky broadcast: delivers the current level at once, then every change.
         registerReceiver(batteryReceiver, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         connectIfConfigured()
@@ -165,13 +173,27 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
 
     /** All inputs (touchpad keys, R08 ring via the bridge or media keys, swipes) end up here. */
     private fun handle(action: GlassesInput.Action) {
+        if (action == GlassesInput.Action.DUPLICATE || action == GlassesInput.Action.NONE) return
+        // While captions are hidden, a tap or a slide only brings them back.
+        if (captionsHidden && action != GlassesInput.Action.BACK) {
+            showCaptions()
+            return
+        }
         when (action) {
-            GlassesInput.Action.SELECT -> return // listening is always on
+            GlassesInput.Action.SELECT -> Unit // listening is always on; a tap just keeps captions up
             GlassesInput.Action.PREVIOUS -> captions.scrollOlder()
             GlassesInput.Action.NEXT -> captions.scrollNewer()
-            GlassesInput.Action.BACK -> if (captions.scrollBack > 0) captions.backToLive() else finish()
-            GlassesInput.Action.DUPLICATE, GlassesInput.Action.NONE -> return
+            GlassesInput.Action.BACK -> if (captions.scrollBack > 0) captions.backToLive() else return finish()
+            else -> return
         }
+        showCaptions()
+    }
+
+    /** Shows captions and (re)starts the [CAPTION_HIDE_MS] countdown to hide them. */
+    private fun showCaptions() {
+        captionsHidden = false
+        main.removeCallbacks(hideCaptions)
+        main.postDelayed(hideCaptions, CAPTION_HIDE_MS)
         render()
     }
 
@@ -253,7 +275,10 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
 
     override fun onMessage(message: Protocol.ServerMessage) {
         when (message) {
-            is Protocol.ServerMessage.Caption -> captions.apply(message)
+            is Protocol.ServerMessage.Caption -> {
+                captions.apply(message)
+                if (message.text.isNotBlank()) return showCaptions()
+            }
             is Protocol.ServerMessage.Error -> notice = "서버 오류: ${message.message}"
             is Protocol.ServerMessage.Assist ->
                 assist = if (message.text.isBlank()) null else HudView.Assist(message.title, message.text)
@@ -272,9 +297,10 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
             connectionAlert = connectionAlert,
             listening = mic.isRunning,
             level = level,
-            lines = captions.visible(HudView.MAX_LINES),
+            lines = if (captionsHidden) emptyList() else captions.visible(HudView.MAX_LINES),
             scrollBack = captions.scrollBack,
-            notice = notice,
+            // The idle hint goes away with the captions; errors stay.
+            notice = if (captionsHidden && notice == setupNotice()) "" else notice,
             assist = assist,
             assistBusy = assistBusy && connected,
             message = message,
@@ -287,5 +313,6 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     private companion object {
         const val TAG = "Conversate"
         const val REQ_MIC = 1
+        const val CAPTION_HIDE_MS = 10_000L
     }
 }
