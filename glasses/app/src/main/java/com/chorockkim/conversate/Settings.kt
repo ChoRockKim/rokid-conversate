@@ -13,6 +13,19 @@ import android.content.Intent
 data class ServerConfig(val url: String, val token: String) {
     val isComplete: Boolean get() = url.startsWith("ws://") || url.startsWith("wss://")
 
+    /** HTTP(S) base of the same server, for OTA: wss://host/ws -> https://host. */
+    val httpBase: String
+        get() {
+            val http = when {
+                url.startsWith("wss://") -> "https://" + url.removePrefix("wss://")
+                url.startsWith("ws://") -> "http://" + url.removePrefix("ws://")
+                else -> url
+            }
+            val schemeEnd = http.indexOf("://").let { if (it < 0) 0 else it + 3 }
+            val pathStart = http.indexOf('/', schemeEnd)
+            return if (pathStart < 0) http else http.substring(0, pathStart)
+        }
+
     companion object {
         private const val PREFIX = "CONVERSATE:"
 

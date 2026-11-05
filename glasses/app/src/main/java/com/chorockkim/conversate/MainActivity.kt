@@ -24,7 +24,7 @@ import com.chorockkim.conversate.ConversateClient.State
  *   tap = start/stop, forward/back = newer/older captions, back (double tap) = back to live
  *   captions if scrolled, otherwise exit.
  */
-class MainActivity : Activity(), ConversateClient.Listener {
+class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     private val main = Handler(Looper.getMainLooper())
     private val input = GlassesInput()
     private val captions = Captions()
@@ -32,6 +32,7 @@ class MainActivity : Activity(), ConversateClient.Listener {
     private lateinit var hud: HudView
     private lateinit var client: ConversateClient
     private lateinit var mic: MicStreamer
+    private lateinit var updater: Updater
 
     private var connection = "연결 안 됨"
     private var connected = false
@@ -39,6 +40,9 @@ class MainActivity : Activity(), ConversateClient.Listener {
     private var level = 0.0
     private var notice = ""
     private var assist: HudView.Assist? = null
+    private var message: String? = null
+    private var lastUpdateCheck = 0L
+    private val clearMessage = Runnable { message = null; render() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,6 +75,8 @@ class MainActivity : Activity(), ConversateClient.Listener {
             },
             onError = { message -> main.post { notice = message; render() } },
         )
+        updater = Updater(this, { settings.config }, { main.post(it) })
+        updater.listener = this
         notice = setupNotice()
         render()
     }
@@ -166,6 +172,8 @@ class MainActivity : Activity(), ConversateClient.Listener {
         level = 0.0
         notice = setupNotice()
         render()
+        // An update found while listening waits until now, so a conversation is never cut off.
+        if (updater.available != null) updater.install()
     }
 
     override fun onRequestPermissionsResult(code: Int, permissions: Array<out String>, results: IntArray) {
@@ -195,6 +203,29 @@ class MainActivity : Activity(), ConversateClient.Listener {
         connected = state == State.READY
         connectionAlert = (state == State.IDLE || state == State.WAITING_RETRY) && detail.isNotEmpty()
         render()
+        // Check for a new version when the server is reachable: first connection, then every 6 h.
+        val now = System.currentTimeMillis()
+        if (state == State.READY && now - lastUpdateCheck > UPDATE_CHECK_MS) {
+            lastUpdateCheck = now
+            updater.check()
+        }
+    }
+
+    // endregion
+
+    // region Update (no taps: installs by itself while not listening)
+
+    override fun onUpdateAvailable(available: Updater.Latest?) {
+        render()
+        if (available != null && !mic.isRunning) updater.install()
+    }
+
+    override fun onUpdateStatus(message: String) {
+        Log.i(TAG, "update: $message")
+        this.message = message
+        main.removeCallbacks(clearMessage)
+        main.postDelayed(clearMessage, 8_000)
+        render()
     }
 
     override fun onMessage(message: Protocol.ServerMessage) {
@@ -221,11 +252,14 @@ class MainActivity : Activity(), ConversateClient.Listener {
             scrollBack = captions.scrollBack,
             notice = notice,
             assist = assist,
+            message = message,
+            update = updater.available?.versionName,
         )
     }
 
     private companion object {
         const val TAG = "Conversate"
         const val REQ_MIC = 1
+        const val UPDATE_CHECK_MS = 6 * 60 * 60 * 1000L
     }
 }

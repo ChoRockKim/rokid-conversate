@@ -52,6 +52,10 @@ class HudView(context: Context) : View(context) {
         val notice: String = "",
         /** AI result for the top panel (null = leave it empty). */
         val assist: Assist? = null,
+        /** Short-lived status (update progress, errors), shown instead of the hint line. */
+        val message: String? = null,
+        /** Version being installed/waiting, shown bottom right before the time ("새 버전 0.2.0"). */
+        val update: String? = null,
     )
 
     data class Assist(val title: String, val text: String)
@@ -126,6 +130,7 @@ class HudView(context: Context) : View(context) {
     private val latest = paint(CAPTION_SIZE, green)
     private val older = paint(CAPTION_SIZE, faint)
     private val noticePaint = paint(CAPTION_SIZE, dim)
+    private val updatePaint = paint(12f, green)
     private val assistTitle = paint(13f, green, bold = true)
     private val assistBody = paint(13f, Color.WHITE)
     private val divider = Paint().apply { color = Color.parseColor("#1f4a2e"); strokeWidth = 1f }
@@ -181,10 +186,18 @@ class HudView(context: Context) : View(context) {
 
         // Bottom line: hint (left), time (right).
         val time = clockText(clock())
-        canvas.drawText(time, W - MARGIN - tiny.measureText(time), BOTTOM_BASELINE, tiny)
-        val hint = if (s.scrollBack > 0) "▲ ${s.scrollBack}줄 전 · 앞으로 쓸면 최신" else HINT
-        val hintText = TextUtils.ellipsize(hint, tiny, W - 2 * MARGIN - 50f, TextUtils.TruncateAt.END)
-        canvas.drawText(hintText, 0, hintText.length, MARGIN, BOTTOM_BASELINE, tiny)
+        var right = W - MARGIN - tiny.measureText(time)
+        canvas.drawText(time, right, BOTTOM_BASELINE, tiny)
+        s.update?.let { u ->
+            val label = "새 버전 $u"
+            updatePaint.color = green
+            right -= 8f + updatePaint.measureText(label)
+            canvas.drawText(label, right, BOTTOM_BASELINE, updatePaint)
+        }
+        val hint = s.message ?: if (s.scrollBack > 0) "▲ ${s.scrollBack}줄 전 · 앞으로 쓸면 최신" else HINT
+        val hintPaint = if (s.message != null) updatePaint else tiny
+        val hintText = TextUtils.ellipsize(hint, hintPaint, right - MARGIN - 8f, TextUtils.TruncateAt.END)
+        canvas.drawText(hintText, 0, hintText.length, MARGIN, BOTTOM_BASELINE, hintPaint)
 
         canvas.restore()
         postInvalidateDelayed(15_000) // bottom-right time

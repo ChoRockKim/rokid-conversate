@@ -22,9 +22,10 @@ import threading
 import time
 from collections import deque
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
 
 from .assist import Assist, AssistEngine, Assistant, assistant_from_env
+from .ota import ota_router_from_env
 from .segmenter import SAMPLE_RATE, Event, Segmenter
 from .transcriber import FasterWhisperTranscriber, Transcriber
 
@@ -40,6 +41,7 @@ def create_app(
     transcriber: Transcriber | None = None,
     token: str | None = None,
     assistant: Assistant | None | object = _FROM_ENV,
+    ota: APIRouter | None = None,
 ) -> FastAPI:
     app = FastAPI(title="rokid-conversate")
     stt = transcriber or FasterWhisperTranscriber()
@@ -48,6 +50,7 @@ def create_app(
         # Load the model in the background at startup, not on the first caption.
         threading.Thread(target=stt._get_model, daemon=True, name="whisper-preload").start()
     expected = token if token is not None else os.environ.get("CONVERSATE_TOKEN", "")
+    app.include_router(ota or ota_router_from_env(expected))
 
     @app.get("/health")
     def health() -> dict:

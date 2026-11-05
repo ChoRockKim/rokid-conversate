@@ -36,3 +36,11 @@ WebSocket 하나로 오간다. 주소는 `ws://<서버>:8000/ws` (외부에서�
 G2 Conversate 의 나머지 기능에 해당하는 메시지. 형식은 그때 정한다.
 - `summary`: 대화 끝난 뒤 요약·할 일
 - `translation`: 번역 자막
+
+## OTA (HTTP)
+같은 서버의 HTTP 주소 (`wss://host/ws` → `https://host`).
+| 요청 | 인증 | 응답 |
+|---|---|---|
+| `GET /app/latest` | 안경 토큰 | `{"versionCode":2,"versionName":"0.2.0","size":…,"sha256":"…","uploadedAt":"…"}`, 없으면 404 |
+| `GET /app/download` | 안경 토큰 | APK (`x-sha256` 헤더) |
+| `PUT /app/upload?versionCode=2&versionName=0.2.0` | `OTA_UPLOAD_TOKEN` | 위와 같은 메타. 본문은 APK (80MB 이하, zip 머리 확인) |

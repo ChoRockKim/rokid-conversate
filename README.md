@@ -61,15 +61,21 @@ export OPENAI_API_KEY=sk-...                       # 위쪽 AI 결과용 (없으
 ### 배포 (Railway)
 Railway 프로젝트 `rokid-conversate` → 서비스 `server` (GitHub `main` 의 `/server` 를 Dockerfile 로 빌드, `server/**` 가 바뀌면 다시 배포).
 주소: `wss://server-production-24bc.up.railway.app/ws`, 헬스체크 `/health`.
-변수: `CONVERSATE_TOKEN`, `WHISPER_MODEL=small`, `WHISPER_LANGUAGE=ko`, `ASSIST_MODEL`, `ASSIST_WEB_SEARCH`. AI 영역을 켜려면 `OPENAI_API_KEY` 를 대시보드에서 추가.
+변수: `CONVERSATE_TOKEN`, `OTA_UPLOAD_TOKEN`, `OTA_DIR=/data/ota` (볼륨 `ota-data` 를 `/data` 에), `WHISPER_MODEL=small`, `WHISPER_LANGUAGE=ko`, `ASSIST_MODEL`, `ASSIST_WEB_SEARCH`. AI 영역을 켜려면 `OPENAI_API_KEY` 를 대시보드에서 추가.
 
-### 2. 안경 앱
+### 2. 안경 앱 (처음 한 번은 케이블로)
+처음 설치부터 고정 키로 서명한 릴리스 APK 를 쓴다. 그래야 이후 OTA 업데이트가 덮어 설치된다.
 ```bash
 cd glasses
 echo "sdk.dir=/path/to/android-sdk" > local.properties   # platforms;android-36
-./gradlew :app:assembleDebug
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb shell pm grant com.chorockkim.conversate android.permission.RECORD_AUDIO
+export RELEASE_KEYSTORE=~/.config/rokid-conversate/release.keystore   # 없으면 처음 실행 때 만든다. 꼭 백업
+export RELEASE_KEYSTORE_PASS=...
+scripts/release.sh 1 0.1.0
+PKG=com.chorockkim.conversate
+adb install -r -i $PKG build/rokid-conversate-0.1.0.apk                # -i: 이 앱이 자기 설치자 → 업데이트에 확인 창 없음
+adb shell pm grant $PKG android.permission.RECORD_AUDIO               # 마이크
+adb shell appops set $PKG REQUEST_INSTALL_PACKAGES allow              # 업데이트 설치 허용
+adb shell appops set $PKG SYSTEM_ALERT_WINDOW allow                   # 업데이트 뒤 앱 다시 띄우기
 ```
 서버 주소·토큰 설정 (안경에 키보드가 없어서 adb 로 넣는다. 저장되므로 한 번만):
 ```bash
@@ -77,6 +83,18 @@ adb shell am start -n com.chorockkim.conversate/.MainActivity --es config "'CONV
 ```
 빌드할 때 넣어 두려면 `local.properties` 에 `conversateUrl=` / `conversateToken=` (APK 에 토큰이 들어가니 남에게 주지 말 것).
 `CONVERSATE:url=…;token=…` 문자열은 나중에 QR 코드로 설정할 때도 같은 형식을 쓸 생각이다.
+
+### 3. 업데이트 (OTA, 안경에서 누를 것 없음)
+```bash
+export OTA_UPLOAD_TOKEN=...   # Railway 변수 OTA_UPLOAD_TOKEN
+scripts/release.sh 2 0.2.0 --upload   # versionCode 는 매번 올린다
+```
+- 안경은 서버에 연결될 때와 그 뒤 6시간마다 `/app/latest` 를 확인한다. 새 버전이면 받아서 sha256 을 확인하고 **확인 창 없이 설치**한 뒤 앱을 다시 띄운다 (Android 12 의 `USER_ACTION_NOT_REQUIRED`, 자기 자신 업데이트만 가능).
+- 듣는 중이면 끊지 않고, 정지했을 때 설치한다. 진행 상황은 아래 줄에, 받을 버전은 오른쪽 아래 `새 버전 0.2.0`.
+- 위의 `-i` 설치나 `appops` 가 빠졌으면 안드로이드가 설치 확인 창을 띄운다 (그때는 한 번 눌러야 함).
+- 서버 쪽: `PUT /app/upload` (업로드 토큰), `GET /app/latest`·`/app/download` (안경 토큰). APK 는 Railway 볼륨 `/data/ota` 에 하나만 보관.
+- **릴리스 키를 잃어버리면 OTA 로는 더 이상 업데이트할 수 없다** (지우고 케이블로 다시 설치).
+- 실기 미확인: Rokid 펌웨어가 확인 창 없는 설치와 업데이트 뒤 자동 실행을 허용하는지.
 
 ### 테스트
 ```bash
