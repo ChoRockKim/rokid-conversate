@@ -7,6 +7,8 @@
 # Environment (values never go into the repository):
 #   RELEASE_KEYSTORE        keystore file (alias "conversate"). Created on first run if missing.
 #   RELEASE_KEYSTORE_PASS   its password
+#   CONVERSATE_URL          server address baked into the APK (required unless in local.properties)
+#   CONVERSATE_TOKEN        its token (same)
 #   OTA_UPLOAD_TOKEN        for --upload (Railway variable of the same name)
 #   CONVERSATE_SERVER       default https://server-production-24bc.up.railway.app
 #
@@ -20,6 +22,12 @@ UPLOAD="${3:-}"
 SERVER="${CONVERSATE_SERVER:-https://server-production-24bc.up.railway.app}"
 KS="${RELEASE_KEYSTORE:?RELEASE_KEYSTORE (path) required}"
 PASS="${RELEASE_KEYSTORE_PASS:?RELEASE_KEYSTORE_PASS required}"
+# The server address and token are baked in. Without them the installed app shows "서버 주소가
+# 없습니다" and cannot even reach the server to update itself again (0.1.14, 2026-11-05).
+if ! grep -q '^conversateUrl=' local.properties 2>/dev/null; then
+  : "${CONVERSATE_URL:?CONVERSATE_URL (wss://.../ws) required, or conversateUrl in local.properties}"
+  : "${CONVERSATE_TOKEN:?CONVERSATE_TOKEN required, or conversateToken in local.properties}"
+fi
 
 if [ ! -s "$KS" ]; then
   echo "creating release keystore at $KS (back it up!)"
