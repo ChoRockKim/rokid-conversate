@@ -29,6 +29,7 @@ log = logging.getLogger(__name__)
 
 URL = "wss://api.openai.com/v1/realtime/translations?model={model}"
 _SENTENCE_END = re.compile(r"[.?!。？！]\s*$")
+INPUT_TRANSCRIPTION_MODEL = os.environ.get("LIVE_INPUT_TRANSCRIPTION_MODEL", "gpt-transcribe")
 
 
 def resample_16k_to_24k(pcm16k: bytes) -> bytes:
@@ -60,7 +61,11 @@ class LiveLine:
     def should_close(self) -> bool:
         if len(self.korean) > self.MAX_CHARS:
             return True
-        return bool(_SENTENCE_END.search(self.korean)) and bool(_SENTENCE_END.search(self.source))
+        if not _SENTENCE_END.search(self.korean):
+            return False
+        # Source transcript may not be sent at all (it was not, 2026-11-05); then the
+        # translation's sentence end is enough.
+        return not self.source.strip() or bool(_SENTENCE_END.search(self.source))
 
     def take(self) -> tuple[str, str]:
         out = (self.source.strip(), self.korean.strip())
@@ -102,6 +107,12 @@ class LiveTranslator:
         await self.ws.send(json.dumps(
             {"type": "session.update", "session": {"audio": {"output": {"language": self.language}}}}
         ))
+        # Source-language transcript: not documented, and not sent with the update above. Ask
+        # for it separately, so a rejection (logged as an error event) leaves translation working.
+        await self.ws.send(json.dumps({
+            "type": "session.update",
+            "session": {"audio": {"input": {"transcription": {"model": INPUT_TRANSCRIPTION_MODEL}}}},
+        }))
         self.reader = asyncio.create_task(self._read())
         log.info("live translation: session open (%s -> %s)", self.model, self.language)
 
@@ -116,9 +127,13 @@ class LiveTranslator:
 
     async def _read(self) -> None:
         try:
+            seen: set[str] = set()
             async for raw in self.ws:
                 event = json.loads(raw)
                 kind = event.get("type")
+                if kind not in seen:
+                    seen.add(kind)
+                    log.info("live translation: first %s event: %s", kind, str(raw)[:300])
                 if kind == "session.input_transcript.delta":
                     self.line.add_source(event.get("delta", ""))
                     await self._emit()

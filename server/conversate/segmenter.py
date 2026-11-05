@@ -40,10 +40,10 @@ class SegmenterConfig:
     min_speech_ms: int = 300
     # Once an utterance is this long, a shorter pause is enough to end it, so long talk comes
     # out in caption-sized pieces (cut at a breath rather than mid-word) ...
-    long_after_ms: int = 4_000
-    long_end_silence_ms: int = 300
+    long_after_ms: int = 6_000
+    long_end_silence_ms: int = 400
     # ... and a hard cut so one long monologue still produces final captions.
-    max_segment_ms: int = 8_000
+    max_segment_ms: int = 12_000
     # Ask for a partial transcript every this much new audio inside an utterance (0 = never).
     partial_every_ms: int = 1_500
     # Audio kept from before speech started, so the first syllable is not clipped.

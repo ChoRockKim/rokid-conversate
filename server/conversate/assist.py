@@ -49,6 +49,8 @@ _CRITERIA = """대화에 도움이 되는 정보가 있으면 답한다. 이런 
 
 TRIAGE_INSTRUCTIONS = f"""너는 스마트 안경을 쓴 사용자의 대화를 옆에서 듣는 보조다.
 아래 대화 받아쓰기(음성 인식이라 틀린 글자가 있을 수 있음)를 보고, 지금 화면에 정보를 띄울지만 판단한다.
+"[새]" 표시가 붙은 줄만 새로 들은 말이다. 거기서만 고른다. 표시 없는 줄은 이미 지나간 대화라 맥락으로만 쓰고,
+그 안의 질문이나 주제는 이미 처리했으므로 다시 고르지 않는다.
 {_CRITERIA}
 
 반드시 JSON 하나만 출력한다.
@@ -57,6 +59,9 @@ TRIAGE_INSTRUCTIONS = f"""너는 스마트 안경을 쓴 사용자의 대화를 
 
 ANSWER_INSTRUCTIONS = """너는 스마트 안경 화면에 짧은 정보를 띄우는 보조다.
 주어진 질문에 정확히 답한다 (필요하면 웹 검색). 대화는 맥락으로만 참고한다.
+백과사전처럼 사실만 쓴다. 사용자에게 말을 걸지 않는다:
+인사, 되묻기, 제안("~해 보세요"), 공감("궁금하시군요"), 감탄, 대화 내용 요약은 쓰지 않는다.
+문장은 "~이다" 또는 "~입니다"로 끝낸다.
 안경 화면이 아주 작다. 반드시 JSON 하나만 출력한다:
 {"title": "15자 이내 주제", "text": "한국어 80자 이내, 핵심 사실만 한두 문장"}
 링크, URL, 출처 표시, 괄호 속 사이트 이름은 절대 넣지 않는다.
@@ -170,6 +175,22 @@ class OpenAIAssistant:
         return parse_reply(reply)
 
 
+def _norm(text: str) -> str:
+    return re.sub(r"[\W_]+", "", text or "").lower()
+
+
+def similar(a: str, b: str, threshold: float = 0.6) -> bool:
+    """Same topic or answer, ignoring spaces and punctuation."""
+    import difflib
+
+    x, y = _norm(a), _norm(b)
+    if not x or not y:
+        return False
+    if x in y or y in x:
+        return True
+    return difflib.SequenceMatcher(None, x, y).ratio() >= threshold
+
+
 def parse_topic(text: str) -> str | None:
     """Triage reply -> the question to answer, or None for skip / anything unusable."""
     match = re.search(r"\{.*\}", text or "", re.DOTALL)
@@ -244,6 +265,9 @@ class AssistConfig:
     context_lines: int = 12
     # Titles remembered to avoid repeating a topic.
     remember_titles: int = 6
+    # Recent topics/answers kept to drop repeats (a topic once answered came back again and
+    # again because the same question stayed in the context window).
+    remember_answers: int = 10
 
 
 class AssistEngine:
@@ -265,6 +289,8 @@ class AssistEngine:
         self.clock = clock
         self.lines: deque[str] = deque(maxlen=self.config.context_lines)
         self.shown: deque[str] = deque(maxlen=self.config.remember_titles)
+        self.recent: deque[str] = deque(maxlen=self.config.remember_answers)
+        self.new_lines: list[str] = []
         self.new_chars = 0
         self.last_ask = -1e9
         self.task: asyncio.Task | None = None
@@ -280,6 +306,7 @@ class AssistEngine:
         if not text:
             return
         self.lines.append(text)
+        self.new_lines.append(text)
         self.new_chars += len(text)
         if looks_like_question(text):
             self.question = True
@@ -308,13 +335,20 @@ class AssistEngine:
         self.last_ask = self.clock()
         self.new_chars = 0
         self.question = False
-        transcript = list(self.lines)
+        # Mark what is new since the last ask; the rest is context only.
+        new = set(self.new_lines)
+        self.new_lines = []
+        transcript = [f"[새] {line}" if line in new else line for line in self.lines]
         busy = False
+        topic = None
+        triage = getattr(self.assistant, "triage", None)
         try:
-            triage = getattr(self.assistant, "triage", None)
             if triage is not None:
                 # Step 1 shows nothing; "thinking" only once there is something to answer.
                 topic = await asyncio.to_thread(triage, transcript, list(self.shown))
+                if topic is not None and self._seen(topic):
+                    log.info("assist: topic %r repeats a recent one, skipped", topic)
+                    topic = None
                 if topic is None:
                     result = None
                 else:
@@ -333,12 +367,21 @@ class AssistEngine:
             result = None
         if busy:
             await self._busy(False)
+        if result is not None and (self._seen(result.title) or self._seen(result.text)):
+            log.info("assist: answer %r repeats a recent one, dropped", result.title)
+            result = None
         if result is not None:
             if result.title:
                 self.shown.append(result.title)
+            self.recent.extend([result.title, result.text])
             await self.send(result)
+        if triage is not None and topic is not None:
+            self.recent.append(topic)
         self.task = None
         self._maybe_ask()
+
+    def _seen(self, text: str) -> bool:
+        return any(similar(text, old) for old in self.recent)
 
     async def _busy(self, value: bool) -> bool:
         if self.on_busy is not None:

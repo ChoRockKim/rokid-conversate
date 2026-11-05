@@ -67,9 +67,15 @@ def test_session_flow():
         await asyncio.wait_for(lt.closed.wait(), 1)
         await lt.stop()
         kinds = [m["type"] for m in ws.sent]
-        assert kinds[0] == "session.update"
+        assert kinds[0] == "session.update" and kinds[1] == "session.update"
         assert ws.sent[0]["session"]["audio"]["output"]["language"] == "ko"
         assert "session.input_audio_buffer.append" in kinds
         assert lines[-1] == ("Hello.", "안녕하세요.", True)
 
     asyncio.run(main())
+
+
+def test_translation_only_line_closes_on_its_sentence_end():
+    line = LiveLine()
+    line.add_korean("이거 얼마예요?")
+    assert line.should_close()

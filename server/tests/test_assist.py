@@ -40,7 +40,7 @@ def test_waits_for_enough_new_speech():
         eng.on_final("이번에는 충분히 긴 문장이 들어왔습니다 정말로")
         await asyncio.sleep(0.05)
         assert len(rec.calls) == 1
-        assert rec.calls[0][0] == ["짧은 말", "이번에는 충분히 긴 문장이 들어왔습니다 정말로"]
+        assert rec.calls[0][0] == ["[새] 짧은 말", "[새] 이번에는 충분히 긴 문장이 들어왔습니다 정말로"]
         assert sent == [Assist("주제", "내용")]
 
     run(main())
@@ -158,7 +158,7 @@ def test_question_is_asked_at_once_even_when_short():
         eng.on_final("방탄소년단이 언제 데뷔했더라")  # short, but a question
         await asyncio.sleep(0.05)
         assert len(rec.calls) == 1
-        assert rec.calls[0][0][-1] == "방탄소년단이 언제 데뷔했더라"
+        assert rec.calls[0][0][-1] == "[새] 방탄소년단이 언제 데뷔했더라"
 
     run(main())
 
@@ -181,7 +181,7 @@ def test_question_jumps_a_scheduled_ask():
         eng.on_final("그게 언제였지?")  # question: cancels the wait, asks now
         await asyncio.sleep(0.05)
         assert len(rec.calls) == 2
-        assert rec.calls[1][0][-1] == "그게 언제였지?"
+        assert rec.calls[1][0][-1] == "[새] 그게 언제였지?"
 
     run(main())
 
@@ -263,3 +263,39 @@ def test_parse_topic():
     assert parse_topic('{"skip": true}') is None
     assert parse_topic('{"topic": ""}') is None
     assert parse_topic("음") is None
+
+
+def test_similar():
+    from conversate.assist import similar
+
+    assert similar("방탄소년단 데뷔일은?", "방탄소년단의 데뷔일은?")
+    assert similar("방탄소년단 데뷔", "방탄소년단 데뷔일")
+    assert not similar("방탄소년단 데뷔일은?", "CPC 뜻은?")
+    assert not similar("", "아무거나")
+
+
+def test_new_lines_are_marked_and_repeats_are_dropped():
+    async def main():
+        seen_transcripts, sent = [], []
+
+        class Same:
+            def triage(self, transcript, shown):
+                seen_transcripts.append(list(transcript))
+                return "방탄소년단 데뷔일은?"
+
+            def answer(self, topic, transcript):
+                return Assist("방탄소년단 데뷔", "2013년 6월 13일이다.")
+
+        async def send(a):
+            sent.append(a.title)
+
+        eng = AssistEngine(Same(), send, AssistConfig(min_interval_s=0, min_new_chars=1))
+        eng.on_final("방탄소년단이 언제 데뷔했더라")
+        await asyncio.sleep(0.05)
+        eng.on_final("아 그렇구나")
+        await asyncio.sleep(0.05)
+        assert seen_transcripts[0] == ["[새] 방탄소년단이 언제 데뷔했더라"]
+        assert seen_transcripts[1] == ["방탄소년단이 언제 데뷔했더라", "[새] 아 그렇구나"]
+        assert sent == ["방탄소년단 데뷔"]  # the same topic again is not shown twice
+
+    run(main())
