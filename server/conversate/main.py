@@ -18,6 +18,7 @@ import hmac
 import json
 import logging
 import os
+import threading
 import time
 from collections import deque
 
@@ -43,6 +44,9 @@ def create_app(
     app = FastAPI(title="rokid-conversate")
     stt = transcriber or FasterWhisperTranscriber()
     ai = assistant_from_env() if assistant is _FROM_ENV else assistant
+    if os.environ.get("WHISPER_PRELOAD") == "1" and hasattr(stt, "_get_model"):
+        # Load the model in the background at startup, not on the first caption.
+        threading.Thread(target=stt._get_model, daemon=True, name="whisper-preload").start()
     expected = token if token is not None else os.environ.get("CONVERSATE_TOKEN", "")
 
     @app.get("/health")
