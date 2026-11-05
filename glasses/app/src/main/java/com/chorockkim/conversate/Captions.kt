@@ -41,9 +41,10 @@ class Captions(private val maxFinals: Int = 50) {
                 if (scrollBack > 0) scrollBack = (scrollBack + 1).coerceAtMost(finals.size - 1)
             }
         } else {
-            val lastFinalId = finals.lastOrNull()?.id ?: 0
-            if (caption.id > lastFinalId && caption.text.isNotBlank()) {
-                partial = Line(caption.id, caption.text.trim(), false)
+            // Live translation lines use their own id range, so "newer than the last final" is
+            // not a usable test; a partial just must not belong to a caption already final.
+            if (finals.none { it.id == caption.id } && (caption.text.isNotBlank() || caption.translation != null)) {
+                partial = Line(caption.id, caption.text.trim(), false, caption.translation)
             }
         }
     }

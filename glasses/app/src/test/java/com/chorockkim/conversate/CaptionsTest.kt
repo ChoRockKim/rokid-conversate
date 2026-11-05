@@ -115,4 +115,14 @@ class CaptionsTest {
         // a comma no longer splits a Korean sentence that fits
         assertEquals(listOf("실례합니다, 가장 가까운 지하철역이 어디인가요?"), Captions.chunk("실례합니다, 가장 가까운 지하철역이 어디인가요?"))
     }
+
+    @Test fun liveTranslationPartialShowsBothRows() {
+        val c = Captions()
+        c.apply(Caption(5, "안녕하세요", true))
+        c.apply(Caption(1_000_000, "How much is", false, translation = "얼마"))
+        assertEquals(listOf("안녕하세요", "How much is", "얼마"), c.visible(10).map { it.text })
+        c.apply(Caption(1_000_000, "How much is this?", true, translation = "이거 얼마예요?"))
+        c.apply(Caption(6, "네 잠시만요", false))  // Korean partial after a live line still shows
+        assertEquals(listOf("안녕하세요", "How much is this?", "이거 얼마예요?", "네 잠시만요"), c.visible(10).map { it.text })
+    }
 }
