@@ -37,6 +37,10 @@ iPhone 은 개인용 핫스팟으로 인터넷만 준다 (폰 앱 없음)
 
 대화 전에 iPhone 브라우저에서 `https://server-production-24bc.up.railway.app/notes` 를 열어 만날 사람·목적·용어·숫자를 적어 두면 AI 가 참고한다 (처음 한 번 `CONVERSATE_TOKEN` 입력, 이 기기에 기억). 대화가 노트 내용에 닿으면 노트를 꺼내 보여 주고, 답변도 노트를 먼저 본다. 서버 볼륨 `/data/notes.json` 에 저장, 8000자까지.
 
+## 대화 기록·요약
+
+iPhone 에서 `https://server-production-24bc.up.railway.app/history`. 확정 자막이 3분 동안 없으면 대화 하나가 끝난 것으로 보고, 제목·요약·할 일을 만든다 (`SUMMARY_MODEL`, 기본 gpt-6.1-terra). 자막·번역·AI 카드를 글로만 볼륨 `/data/conversations` 에 저장 (소리는 저장 안 함). `HISTORY=0` 으로 끔.
+
 ## 조작
 
 | 입력 | 동작 |

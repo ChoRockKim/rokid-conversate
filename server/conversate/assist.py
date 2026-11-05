@@ -43,6 +43,8 @@ _CRITERIA = """대화를 듣는 사람에게 도움이 될 새 정보가 있으�
 - 전문 용어·약어·신조어, 또는 한 번 설명해 주면 좋을 개념
 - 대화에 나온 사람·회사·제품·작품·장소·사건에 대한 유용한 최신 사실 (가격, 출시일, 위치, 영업시간, 평가 등)
 - 대화 속 수치나 사실 주장이 틀렸거나 확인이 필요할 때
+- 회의·협상·상담·면접처럼 무언가 정해지는 대화에서, 빠진 조건이나 지금 되물으면 좋을 점이 분명할 때 (kind: suggest).
+  예: 가격은 나왔는데 납기·배송비 이야기가 없을 때, 상대가 말한 수치가 노트와 다를 때
 - 사전 노트가 있으면: 대화가 노트에 적힌 사람·안건·숫자·용어에 닿을 때 그 노트 내용을 꺼내 준다 (kind: note).
   예: 노트에 "단가 45만 원"이 있고 상대가 가격을 물으면 그 숫자를 띄운다
 핵심: 대화에 이미 나온 내용을 되풀이하거나 요약하는 것은 정보가 아니다. 대화에 없는 새 사실을 더할 수 있을 때만 답한다.
@@ -66,7 +68,8 @@ TRIAGE_INSTRUCTIONS = f"""너는 스마트 안경을 쓴 사용자의 대화를 
 반드시 JSON 하나만 출력한다.
 띄울 때:
 {{"quote": "근거가 된 [새] 줄의 말을 글자 그대로 (10~40자)",
-  "kind": "question | conversion | term | fact | correction | note 중 하나",
+  "kind": "question | conversion | term | fact | correction | note | suggest 중 하나",
+  "text": "kind 가 suggest 일 때만: 화면에 띄울 메모 한 줄 (\"확인할 점: 납기 일정이 아직 안 나옴\" 처럼 20~50자, 명령·말 걸기 없이)",
   "why": "이 정보가 지금 대화에 왜 도움이 되는지 한 줄",
   "topic": "대화만 모르는 사람도 이해할 완전한 질문. 대명사·생략은 풀어 쓰고, 끝에 (상황: 지금 무슨 이야기 중인지 한 줄)"}}
 예: {{"quote": "이 운동화 110달러였어", "kind": "conversion", "why": "산 물건 가격을 원화로 가늠하려 함",
@@ -246,6 +249,7 @@ class Pick:
     kind: str = "fact"
     quote: str | None = None  # None: not checked (one-step or test assistants)
     why: str = ""
+    text: str = ""  # suggest: shown as is, no answer step
 
     @property
     def prompt(self) -> str:
@@ -256,6 +260,7 @@ class Pick:
 # Kinds answered as soon as they come up; the rest (term, fact) are volunteered information
 # and rationed, so the card does not keep popping up with things nobody asked for.
 URGENT_KINDS = {"question", "conversion", "correction", "note"}
+SUGGEST_TITLE = "확인할 점"
 
 
 def parse_triage(text: str) -> Pick | None:
@@ -276,6 +281,7 @@ def parse_triage(text: str) -> Pick | None:
         kind=str(data.get("kind", "fact")).strip().lower() or "fact",
         quote=str(data.get("quote", "")).strip(),
         why=str(data.get("why", "")).strip(),
+        text=str(data.get("text", "")).strip(),
     )
 
 
@@ -465,6 +471,10 @@ class AssistEngine:
                 topic = pick.topic if pick is not None else None
                 if pick is None:
                     result = None
+                elif pick.kind == "suggest":
+                    # A note about the conversation itself: nothing to look up, show it directly.
+                    note = re.sub(r"^\s*확인할\s*점\s*[:：]\s*", "", strip_links(pick.text))[:80]
+                    result = Assist(SUGGEST_TITLE, note) if note else None
                 else:
                     busy = await self._busy(True)
                     result = await asyncio.to_thread(self.assistant.answer, pick.prompt, transcript)
@@ -481,7 +491,7 @@ class AssistEngine:
             result = None
         if busy:
             await self._busy(False)
-        if result is not None and restates(result.text, list(self.lines)):
+        if result is not None and (pick is None or pick.kind != "suggest") and restates(result.text, list(self.lines)):
             log.info("assist: answer %r only restates the conversation, dropped", result.text)
             result = None
         if result is not None and (self._seen(result.title) or self._seen(result.text)):

@@ -403,3 +403,30 @@ def test_very_short_captions_are_not_material():
         assert rec.calls == []
 
     run(main())
+
+
+def test_suggestion_is_shown_directly_and_rationed():
+    from conversate.assist import Pick
+
+    async def main():
+        now = [0.0]
+        sent = []
+
+        async def send(a):
+            sent.append((a.title, a.text))
+
+        a = Picker([
+            Pick(topic="납기", kind="suggest", quote="단가는 45만 원", text="확인할 점: 납기 일정이 아직 안 나옴"),
+            Pick(topic="배송", kind="suggest", quote="200대 주문", text="확인할 점: 배송비 부담 주체"),
+        ])
+        cfg = AssistConfig(min_interval_s=0, min_new_chars=1, proactive_interval_s=25)
+        eng = AssistEngine(a, send, cfg, clock=lambda: now[0])
+        eng.on_final("단가는 45만 원입니다")
+        await asyncio.sleep(0.05)
+        now[0] += 5
+        eng.on_final("200대 주문하겠습니다")
+        await asyncio.sleep(0.05)
+        assert sent == [("확인할 점", "납기 일정이 아직 안 나옴")]  # second one too soon
+        assert a.answered == []  # no answer/search call for suggestions
+
+    run(main())

@@ -23,12 +23,14 @@ import os
 import threading
 import time
 from collections import deque
+from contextlib import asynccontextmanager
 from typing import Callable
 
 import numpy as np
 from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
 
 from .assist import Assist, AssistEngine, Assistant, assistant_from_env
+from .history import ConversationLog, history_from_env, history_router
 from .notes import notes_router, notes_store_from_env
 from .ota import ota_router_from_env
 from .segmenter import SAMPLE_RATE, Event, Segmenter, SegmenterConfig
@@ -57,10 +59,21 @@ def create_app(
     segmenter_config: SegmenterConfig | None = None,
     translator: Translator | None | object = _FROM_ENV,
     live_factory: Callable[..., LiveTranslator] | None | object = _FROM_ENV,
+    history: ConversationLog | None | object = _FROM_ENV,
 ) -> FastAPI:
-    app = FastAPI(title="rokid-conversate")
-    stt = transcriber or transcriber_from_env()
     notes = notes_store_from_env()
+    hist = history_from_env(notes.text) if history is _FROM_ENV else history
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        # Closes conversations that went quiet and has them summarized.
+        task = asyncio.create_task(hist.run()) if hist is not None else None
+        yield
+        if task is not None:
+            task.cancel()
+
+    app = FastAPI(title="rokid-conversate", lifespan=lifespan)
+    stt = transcriber or transcriber_from_env()
     ai = assistant_from_env(notes.text) if assistant is _FROM_ENV else assistant
     tr = translator_from_env() if translator is _FROM_ENV else translator
     if live_factory is _FROM_ENV:
@@ -73,6 +86,8 @@ def create_app(
     expected = token if token is not None else os.environ.get("CONVERSATE_TOKEN", "")
     app.include_router(ota or ota_router_from_env(expected))
     app.include_router(notes_router(notes, expected))
+    if hist is not None:
+        app.include_router(history_router(hist, expected))
 
     @app.get("/health")
     def health() -> dict:
@@ -85,7 +100,7 @@ def create_app(
             return
         await websocket.accept()
         log.info("glasses connected from %s", websocket.client)
-        await Session(websocket, stt, ai, segmenter_config, tr, live_factory).run()
+        await Session(websocket, stt, ai, segmenter_config, tr, live_factory, hist).run()
         log.info("glasses disconnected")
 
     return app
@@ -108,7 +123,9 @@ class Session:
         segmenter_config: SegmenterConfig | None = None,
         translator: Translator | None = None,
         live_factory: Callable[..., LiveTranslator] | None = None,
+        history: ConversationLog | None = None,
     ) -> None:
+        self.history = history
         self.ws = websocket
         self.stt = stt
         self.translator = translator
@@ -136,7 +153,16 @@ class Session:
         async with self.send_lock:
             await self.ws.send_text(json.dumps(message, ensure_ascii=False))
 
+    async def _record(self, coro) -> None:
+        """History writes must never break captions."""
+        try:
+            await coro
+        except Exception:
+            log.exception("history write failed")
+
     async def _send_assist(self, result: Assist) -> None:
+        if self.history is not None:
+            await self._record(self.history.add_card(result.title, result.text))
         await self.send({"type": "assist", "title": result.title, "text": result.text})
 
     async def _send_assist_busy(self, busy: bool) -> None:
@@ -294,6 +320,8 @@ class Session:
             if foreign:
                 self.live_until = time.monotonic() + LIVE_IDLE_S
         else:
+            if final and text and self.history is not None:
+                await self._record(self.history.add_line(text))
             if text or final:
                 await self.send({"type": "caption", "id": event.segment_id, "text": text, "final": final})
             if foreign and self.translator is not None:
@@ -321,6 +349,8 @@ class Session:
             await live.stop()
 
     async def _send_live_line(self, source: str, korean: str, final: bool) -> None:
+        if final and (source or korean) and self.history is not None:
+            await self._record(self.history.add_line(source or "(외국어)", korean or None))
         if needs_translation(source):
             self.live_until = time.monotonic() + LIVE_IDLE_S
         message = {"type": "caption", "id": self.live_id, "text": source, "final": final}
@@ -338,6 +368,8 @@ class Session:
             log.exception("translation failed")
             return
         if korean:
+            if self.history is not None:
+                await self._record(self.history.add_translation(text, korean))
             await self.send(
                 {"type": "caption", "id": segment_id, "text": text, "final": True, "translation": korean}
             )

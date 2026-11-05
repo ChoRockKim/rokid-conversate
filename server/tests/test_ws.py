@@ -30,6 +30,7 @@ def client(stt=None, assistant=None, translator=None, live_factory=None):
             segmenter_config=SegmenterConfig(use_webrtc=False),
             translator=translator,
             live_factory=live_factory,
+            history=None,
         )
     )
 
