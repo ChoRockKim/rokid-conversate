@@ -79,6 +79,7 @@ adb install -r -i $PKG build/rokid-conversate-0.1.0.apk                # -i: 이
 adb shell pm grant $PKG android.permission.RECORD_AUDIO               # 마이크
 adb shell appops set $PKG REQUEST_INSTALL_PACKAGES allow              # 업데이트 설치 허용
 adb shell appops set $PKG SYSTEM_ALERT_WINDOW allow                   # 업데이트 뒤 앱 다시 띄우기
+adb shell pm grant $PKG android.permission.WRITE_SECURE_SETTINGS    # 앱 켤 때 Wi-Fi 자동으로 켜기 (없으면 설정 화면이 열림)
 ```
 서버 주소·토큰 설정 (안경에 키보드가 없어서 adb 로 넣는다. 저장되므로 한 번만):
 ```bash

@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.os.Bundle
+import android.os.SystemClock
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
@@ -69,10 +70,24 @@ class HudView(context: Context) : View(context) {
 
     var state = State()
         set(value) {
+            val wasVisible = field.assist != null || field.assistBusy
+            val isVisible = value.assist != null || value.assistBusy
+            if (wasVisible != isVisible) {
+                // Fade the AI card in or out; while fading out keep drawing what was there.
+                if (!isVisible) fadingAssist = field.assist
+                cardFadeIn = isVisible
+                cardAnimStart = SystemClock.uptimeMillis()
+            }
             field = value
             contentDescription = value.lines.lastOrNull()?.text ?: "대화 자막"
             invalidate()
         }
+
+    /** AI card fade: off in snapshot tests so the card is drawn fully. */
+    var animate = true
+    private var cardFadeIn = true
+    private var cardAnimStart = 0L
+    private var fadingAssist: Assist? = null
 
     /** Clock for the bottom-right time (tests pin it). */
     var clock: () -> Long = System::currentTimeMillis
@@ -182,7 +197,7 @@ class HudView(context: Context) : View(context) {
         }
         drawMic(canvas, s)
 
-        drawAssist(canvas, s.assist, s.assistBusy)
+        drawAnimatedAssist(canvas, s)
 
         // Captions, bottom-up from just above the hint line.
         if (s.lines.isEmpty()) {
@@ -255,6 +270,23 @@ class HudView(context: Context) : View(context) {
         val label = if (s.listening) "듣는 중" else "정지됨"
         small.color = if (s.listening) green else dim
         canvas.drawText(label, x - small.measureText(label), TOP_BASELINE, small)
+    }
+
+    /** The AI card with a short fade + slide when it appears or goes away. */
+    private fun drawAnimatedAssist(canvas: Canvas, s: State) {
+        val elapsed = SystemClock.uptimeMillis() - cardAnimStart
+        val progress = if (!animate) 1f else (elapsed.toFloat() / CARD_ANIM_MS).coerceIn(0f, 1f)
+        val visible = s.assist != null || s.assistBusy
+        if (!visible && (progress >= 1f || fadingAssist == null)) return
+        val alpha = if (cardFadeIn) progress else 1f - progress
+        val eased = alpha * alpha * (3 - 2 * alpha) // smoothstep
+        canvas.save()
+        canvas.translate(0f, (1f - eased) * -CARD_SLIDE)
+        val layer = canvas.saveLayerAlpha(0f, 0f, W, ASSIST_BOTTOM + 8f, (eased * 255).toInt())
+        if (visible) drawAssist(canvas, s.assist, s.assistBusy) else drawAssist(canvas, fadingAssist, false)
+        canvas.restoreToCount(layer)
+        canvas.restore()
+        if (progress < 1f) postInvalidateOnAnimation()
     }
 
     /**
@@ -384,6 +416,9 @@ class HudView(context: Context) : View(context) {
         const val ASSIST_TOP = 36f
         const val ASSIST_BOTTOM = ASSIST_TOP + 84f
         const val CAPTION_TOP = ASSIST_BOTTOM + 8f
+        /** AI card fade/slide duration and distance. */
+        const val CARD_ANIM_MS = 280L
+        const val CARD_SLIDE = 8f
         /** AI card: 70% of the width, centred. */
         const val MODAL_WIDTH = W * 0.7f
         const val MODAL_PAD = 8f

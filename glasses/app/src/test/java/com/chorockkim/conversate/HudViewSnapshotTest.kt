@@ -43,6 +43,7 @@ class HudViewSnapshotTest {
     )
 
     private fun hud(state: HudView.State) = HudView(paparazzi.context).apply {
+        animate = false
         clock = { T0 }
         this.state = state
     }
@@ -135,6 +136,7 @@ class HudViewFullScreenSnapshotTest {
         val context = paparazzi.context
         val root = FrameLayout(context).apply { setBackgroundColor(Color.BLACK) }
         val hud = HudView(context).apply {
+            animate = false
             clock = { 1_793_854_800_000L }
             state = HudView.State(
                 connection = "연결됨", connected = true, listening = true, level = 1200.0, assist = ASSIST_FULL,

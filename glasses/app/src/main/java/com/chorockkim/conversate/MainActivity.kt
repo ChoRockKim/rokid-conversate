@@ -110,7 +110,9 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
                 main.post { client.sendText(Protocol.micLevels(name, levels, rawShare)) }
             },
         )
-        updater =Updater(this, { settings.config }, { main.post(it) })
+        // The glasses keep Wi-Fi off to save battery; this app needs it.
+        WifiEnabler(this) { status -> main.post { onUpdateStatus(status) } }.ensureOn()
+        updater = Updater(this, { settings.config }, { main.post(it) })
         updater.listener = this
         notice = setupNotice()
         render()
@@ -328,6 +330,6 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         const val TAG = "Conversate"
         const val REQ_MIC = 1
         const val CAPTION_HIDE_MS = 10_000L
-        const val ASSIST_HIDE_MS = 8_000L
+        const val ASSIST_HIDE_MS = 10_000L
     }
 }

@@ -61,10 +61,21 @@ class Captions(private val maxFinals: Int = 50) {
         } else {
             finals.toList().takeLast(count) + listOfNotNull(partial)
         }
-        // Original, then its translation on the next row(s): "Where is it?" / "어디예요?"
-        return source.flatMap { line ->
-            chunk(line.text).map { Line(line.id, it, line.final, isOriginal = line.translation != null) } +
-                (line.translation?.let { t -> chunk(t).map { Line(line.id, it, line.final, isTranslation = true) } } ?: emptyList())
+        // Consecutive plain captions run together as one paragraph that fills each row, so a
+        // pause in speech no longer starts a new row (rows broke too often to read comfortably).
+        // A foreign caption stays on its own: original, then its translation on the next row(s).
+        val blocks = mutableListOf<Line>()
+        for (line in source) {
+            val last = blocks.lastOrNull()
+            if (line.translation == null && last != null && last.translation == null) {
+                blocks[blocks.lastIndex] = Line(line.id, "${last.text} ${line.text}", line.final)
+            } else {
+                blocks += line
+            }
+        }
+        return blocks.flatMap { line ->
+            chunk(line.text, sentences = false).map { Line(line.id, it, line.final, isOriginal = line.translation != null) } +
+                (line.translation?.let { t -> chunk(t, sentences = false).map { Line(line.id, it, line.final, isTranslation = true) } } ?: emptyList())
         }.takeLast(count)
     }
 
@@ -89,11 +100,12 @@ class Captions(private val maxFinals: Int = 50) {
          * (not at commas, so one sentence stays together when it fits), then at spaces; a word
          * wider than a row is cut as is.
          */
-        fun chunk(text: String, max: Int = CHUNK_CHARS): List<String> {
+        fun chunk(text: String, max: Int = CHUNK_CHARS, sentences: Boolean = true): List<String> {
             val limit = max.toDouble()
-            val sentences = text.trim().split(Regex("(?<=[.?!。？！])\\s+")).filter { it.isNotBlank() }
+            val parts = if (sentences) text.trim().split(Regex("(?<=[.?!。？！])\\s+")) else listOf(text.trim())
+            val sentenceList = parts.filter { it.isNotBlank() }
             val out = mutableListOf<String>()
-            for (sentence in sentences) {
+            for (sentence in sentenceList) {
                 var current = ""
                 for (word in sentence.split(Regex("\\s+")).filter { it.isNotEmpty() }) {
                     val candidate = if (current.isEmpty()) word else "$current $word"

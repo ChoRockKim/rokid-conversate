@@ -30,7 +30,8 @@ class CaptionsTest {
         val c = Captions()
         (1..5).forEach { c.apply(Caption(it, "줄 $it", true)) }
         c.apply(Caption(6, "말하는 중", false))
-        assertEquals(listOf("줄 4", "줄 5", "말하는 중"), c.texts(3))
+        // short captions run together into one row (paragraph), newest at the end
+        assertEquals(listOf("줄 3 줄 4 줄 5 말하는 중"), c.texts(3))
     }
 
     @Test fun emptyFinalJustClearsPartial() {
@@ -45,11 +46,11 @@ class CaptionsTest {
         (1..5).forEach { c.apply(Caption(it, "줄 $it", true)) }
         c.apply(Caption(6, "말하는 중", false))
         c.scrollOlder()
-        assertEquals(listOf("줄 3", "줄 4"), c.texts(2))
+        assertEquals(listOf("줄 3 줄 4"), c.texts(2))
         c.apply(Caption(6, "줄 6", true))
-        assertEquals(listOf("줄 3", "줄 4"), c.texts(2))
+        assertEquals(listOf("줄 3 줄 4"), c.texts(2))
         repeat(10) { c.scrollNewer() }
-        assertEquals(listOf("줄 5", "줄 6"), c.texts(2))
+        assertEquals(listOf("줄 5 줄 6"), c.texts(2))
     }
 
     @Test fun scrollStopsAtOldest() {
@@ -63,7 +64,7 @@ class CaptionsTest {
     @Test fun historyIsCapped() {
         val c = Captions(maxFinals = 3)
         (1..5).forEach { c.apply(Caption(it, "줄 $it", true)) }
-        assertEquals(listOf("줄 3", "줄 4", "줄 5"), c.texts())
+        assertEquals(listOf("줄 3 줄 4 줄 5"), c.texts())
     }
 
     @Test fun longSentenceIsSplitIntoRows() {
@@ -91,9 +92,8 @@ class CaptionsTest {
         c.apply(Caption(1, "짧은 말", true))
         c.apply(Caption(2, "안녕하세요. 오늘 회의는 여기까지입니다.", false))
         val lines = c.visible(10)
-        assertEquals(listOf("짧은 말", "안녕하세요.", "오늘 회의는 여기까지입니다."), lines.map { it.text })
-        assertEquals(listOf(true, false, false), lines.map { it.final })
-        assertEquals(listOf("오늘 회의는 여기까지입니다."), c.visible(1).map { it.text })
+        // one paragraph that fills the row; no break at the sentence end
+        assertEquals(listOf("짧은 말 안녕하세요. 오늘 회의는 여기까지입니다."), lines.map { it.text })
     }
 
     @Test fun translationArrivesLaterAndShowsBelow() {
@@ -124,5 +124,16 @@ class CaptionsTest {
         c.apply(Caption(1_000_000, "How much is this?", true, translation = "이거 얼마예요?"))
         c.apply(Caption(6, "네 잠시만요", false))  // Korean partial after a live line still shows
         assertEquals(listOf("안녕하세요", "How much is this?", "이거 얼마예요?", "네 잠시만요"), c.visible(10).map { it.text })
+    }
+
+    @Test fun longTalkFillsRowsInsteadOfBreakingPerSentence() {
+        val c = Captions()
+        c.apply(Caption(1, "오늘 회의를 시작하겠습니다.", true))
+        c.apply(Caption(2, "첫 번째 안건은 광고 채널 정리입니다.", true))
+        c.apply(Caption(3, "그다음은 예산입니다.", true))
+        val rows = c.visible(10).map { it.text }
+        assertEquals("오늘 회의를 시작하겠습니다. 첫 번째 안건은 광고 채널 정리입니다. 그다음은 예산입니다.", rows.joinToString(" "))
+        assertTrue(rows.size <= 3)  // was one row per sentence before
+        assertTrue(rows.dropLast(1).all { Captions.width(it) > Captions.CHUNK_CHARS * 0.6 })  // rows are filled
     }
 }
