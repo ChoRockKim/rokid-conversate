@@ -39,6 +39,9 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     private var connectionAlert = false
     private var level = 0.0
     private var notice = ""
+    // Mic thread only.
+    private val gate = SpeechGate()
+    private var micSteps = -1
     private var assist: HudView.Assist? = null
     private var assistBusy = false
     private var battery: Int? = null
@@ -95,8 +98,14 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         client = ConversateClient({ main.post(it) }, this)
         mic = MicStreamer(
             onChunk = { pcm, rms ->
-                client.sendAudio(pcm)
-                main.post { level = rms; render() }
+                // Battery: silence stays on the glasses (SpeechGate), so Wi-Fi can rest.
+                for (out in gate.feed(pcm, rms)) client.sendAudio(out)
+                // Redraw only when the level bars change, not 10 times a second.
+                val steps = HudView.levelSteps(rms)
+                if (steps != micSteps) {
+                    micSteps = steps
+                    main.post { level = rms; render() }
+                }
             },
             onError = { message -> main.post { notice = message; render() } },
             onSource = { name, silent ->

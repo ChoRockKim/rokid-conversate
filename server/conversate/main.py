@@ -203,12 +203,14 @@ class Session:
 
     async def run(self) -> None:
         worker = asyncio.create_task(self._transcribe_loop())
+        watchdog = asyncio.create_task(self._live_watchdog())
         try:
             await self._receive_loop()
         except WebSocketDisconnect:
             pass
         finally:
             worker.cancel()
+            watchdog.cancel()
             if self.assist is not None:
                 self.assist.close()
             await self._stop_live()
@@ -244,6 +246,14 @@ class Session:
                     )
             elif message.get("text") is not None:
                 await self._on_text(message["text"])
+
+    async def _live_watchdog(self) -> None:
+        """The glasses send no audio while it is quiet (battery), so the idle check in the
+        receive loop may never run: close an idle live translation session from here too."""
+        while True:
+            await asyncio.sleep(5)
+            if self.live is not None and time.monotonic() > self.live_until:
+                await self._stop_live()
 
     def _remember(self, pcm: bytes) -> None:
         self.recent.append(pcm)
