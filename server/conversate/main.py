@@ -29,7 +29,7 @@ from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
 from .assist import Assist, AssistEngine, Assistant, assistant_from_env
 from .ota import ota_router_from_env
 from .segmenter import SAMPLE_RATE, Event, Segmenter, SegmenterConfig
-from .transcriber import FasterWhisperTranscriber, Transcriber
+from .transcriber import Transcriber, transcriber_from_env
 
 log = logging.getLogger("conversate")
 
@@ -48,11 +48,12 @@ def create_app(
     segmenter_config: SegmenterConfig | None = None,
 ) -> FastAPI:
     app = FastAPI(title="rokid-conversate")
-    stt = transcriber or FasterWhisperTranscriber()
+    stt = transcriber or transcriber_from_env()
     ai = assistant_from_env() if assistant is _FROM_ENV else assistant
-    if os.environ.get("WHISPER_PRELOAD") == "1" and hasattr(stt, "_get_model"):
+    local = getattr(stt, "local", stt)
+    if os.environ.get("WHISPER_PRELOAD") == "1" and hasattr(local, "_get_model"):
         # Load the model in the background at startup, not on the first caption.
-        threading.Thread(target=stt._get_model, daemon=True, name="whisper-preload").start()
+        threading.Thread(target=local._get_model, daemon=True, name="whisper-preload").start()
     expected = token if token is not None else os.environ.get("CONVERSATE_TOKEN", "")
     app.include_router(ota or ota_router_from_env(expected))
 

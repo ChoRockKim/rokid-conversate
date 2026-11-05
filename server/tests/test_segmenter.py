@@ -122,3 +122,27 @@ def test_short_talk_still_needs_the_normal_pause():
     seg = Segmenter(SegmenterConfig(partial_every_ms=0))
     events = feed_all(seg, silence(500), tone(2000), silence(400), tone(1500), silence(1000))
     assert len([e for e in events if e.kind == "final"]) == 1
+
+
+def test_hybrid_uses_local_for_partials_and_falls_back():
+    from conversate.transcriber import HybridTranscriber, to_wav
+
+    class Named:
+        def __init__(self, name, fail=False):
+            self.name, self.fail, self.calls = name, fail, 0
+
+        def transcribe(self, audio, *, partial):
+            self.calls += 1
+            if self.fail:
+                raise RuntimeError("down")
+            return self.name
+
+    audio = np.zeros(1600, dtype=np.float32)
+    local, api = Named("local"), Named("api")
+    h = HybridTranscriber(local, api)
+    assert h.transcribe(audio, partial=True) == "local"
+    assert h.transcribe(audio, partial=False) == "api"
+    h = HybridTranscriber(Named("local"), Named("api", fail=True))
+    assert h.transcribe(audio, partial=False) == "local"
+    wav = to_wav(audio)
+    assert wav[:4] == b"RIFF" and len(wav) == 44 + 3200
