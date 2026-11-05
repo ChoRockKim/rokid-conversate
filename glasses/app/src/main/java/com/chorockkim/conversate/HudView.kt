@@ -427,8 +427,8 @@ class HudView(context: Context) : View(context) {
         const val CAPTION_SIZE = 13f
         const val LINE_GAP = 4f
         const val LEVEL_STEPS = 5
-        /** More than ever fit; the view cuts from the top. */
-        const val MAX_LINES = 12
+        /** Caption rows on screen: the current one plus about four before it. */
+        const val MAX_LINES = 5
 
         /** ~300 is quiet speech, ~3000+ is loud (int16 RMS, same scale as the server). */
         fun levelSteps(rms: Double): Int = when {

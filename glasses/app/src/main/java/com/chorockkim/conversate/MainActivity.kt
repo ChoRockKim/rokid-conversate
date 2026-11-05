@@ -299,6 +299,17 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
                 if (assist != null) return showAssist()
             }
             is Protocol.ServerMessage.AssistStatus -> assistBusy = message.busy
+            is Protocol.ServerMessage.Level -> {
+                // The server reports "someone is talking" every 0.25 s. Keep captions up while
+                // that lasts, even when the next caption is a few seconds away (they used to hide,
+                // then reappear all at once).
+                if (message.speech) {
+                    if (captionsHidden) return showCaptions()
+                    main.removeCallbacks(hideCaptions)
+                    main.postDelayed(hideCaptions, CAPTION_HIDE_MS)
+                }
+                return
+            }
             else -> return
         }
         render()
