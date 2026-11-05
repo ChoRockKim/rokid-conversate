@@ -28,28 +28,49 @@ class Assist:
 
 
 class Assistant(Protocol):
+    """Either one-step [suggest], or two-step [triage] + [answer] (preferred: the "thinking"
+    hint is shown only once triage decided there is something worth answering)."""
+
     def suggest(self, transcript: list[str], shown: list[str]) -> Assist | None:
         """Blocking; called from a worker thread. `shown` = titles already on screen recently."""
         ...
 
 
-INSTRUCTIONS = """너는 스마트 안경을 쓴 사용자의 대화를 옆에서 돕는 보조다.
-아래 대화 받아쓰기(음성 인식이라 틀린 글자가 있을 수 있음)를 보고, 정말 정보가 필요한 순간에만 답한다.
-대부분의 경우는 건너뛰는 것이 정답이다. 답하는 경우는 딱 이것뿐이다:
-- 누군가 사실을 묻는 질문 (날짜, 수치, 인물, 장소, 정의 등 정답이 있는 것). 필요하면 웹 검색
-- 일반 성인이 모를 만한 전문 용어·약어 (예: 업계 용어, 기술 약어)
-- 대화에서 중요하게 다뤄지는데 덜 알려진 사람·회사·제품
-다음은 반드시 건너뛴다:
-- 인사, 잡담, 감탄, "잘 들려?" 같은 확인, 의견·감정 표현
-- 누구나 아는 일상 단어나 유명한 것 (예: 회의, 예산, 삼성, 서울)
-- 받아쓰기가 이상해서 무슨 말인지 확실하지 않을 때
-- 이미 보여준 주제와 겹칠 때
-확신이 없으면 건너뛴다.
+_CRITERIA = """대화에 도움이 되는 정보가 있으면 답한다. 이런 경우에 답한다:
+- 누군가 묻거나 궁금해하는 사실 (날짜, 수치, 가격, 인물, 장소, 정의, 방법 등). 혼잣말 같은 질문도 포함
+- 전문 용어·약어·신조어, 또는 한 번 설명해 주면 좋을 개념
+- 대화에 나온 사람·회사·제품·작품·장소에 대한 유용한 사실 (유명해도 대화 맥락에 맞는 구체적 정보가 있으면)
+- 대화 속 수치나 사실 주장을 확인해 줄 수 있을 때
+다음은 건너뛴다:
+- 인사, 잡담, 감탄, "잘 들려?" 같은 확인, 의견·감정 표현만 있을 때
+- 회의, 예산, 밥 같은 일상 단어 자체의 뜻
+- 받아쓰기가 너무 이상해서 무슨 말인지 알 수 없을 때
+- 바로 전에 보여준 주제와 같을 때"""
 
+TRIAGE_INSTRUCTIONS = f"""너는 스마트 안경을 쓴 사용자의 대화를 옆에서 듣는 보조다.
+아래 대화 받아쓰기(음성 인식이라 틀린 글자가 있을 수 있음)를 보고, 지금 화면에 정보를 띄울지만 판단한다.
+{_CRITERIA}
+
+반드시 JSON 하나만 출력한다.
+띄울 때: {{"topic": "찾아서 알려줄 내용을 한 문장 질문으로 (예: 방탄소년단 데뷔일은?)"}}
+건너뛸 때: {{"skip": true}}"""
+
+ANSWER_INSTRUCTIONS = """너는 스마트 안경 화면에 짧은 정보를 띄우는 보조다.
+주어진 질문에 정확히 답한다 (필요하면 웹 검색). 대화는 맥락으로만 참고한다.
 안경 화면이 아주 작다. 반드시 JSON 하나만 출력한다:
 {"title": "15자 이내 주제", "text": "한국어 80자 이내, 핵심 사실만 한두 문장"}
 링크, URL, 출처 표시, 괄호 속 사이트 이름은 절대 넣지 않는다.
-건너뛸 때는 {"skip": true}"""
+확실한 답을 찾지 못하면 {"skip": true}"""
+
+# One-step prompt (kept for ASSIST_TRIAGE=0).
+INSTRUCTIONS = f"""너는 스마트 안경을 쓴 사용자의 대화를 옆에서 돕는 보조다.
+아래 대화 받아쓰기(음성 인식이라 틀린 글자가 있을 수 있음)를 보고 필요하면 웹 검색으로 답한다.
+{_CRITERIA}
+
+안경 화면이 아주 작다. 반드시 JSON 하나만 출력한다:
+{{"title": "15자 이내 주제", "text": "한국어 80자 이내, 핵심 사실만 한두 문장"}}
+링크, URL, 출처 표시, 괄호 속 사이트 이름은 절대 넣지 않는다.
+건너뛸 때는 {{"skip": true}}"""
 
 # Korean/English cues that a finished caption is a question worth answering right away.
 _QUESTION = re.compile(
@@ -77,51 +98,91 @@ def strip_links(text: str) -> str:
 
 
 class OpenAIAssistant:
-    """OpenAI Responses API, optionally with the built-in web_search tool.
+    """OpenAI Responses API, in two steps:
+      1. triage (ASSIST_TRIAGE_MODEL, default gpt-6-luna, no tools): is there anything worth
+         showing? Cheap and fast; most conversation ends here, with nothing on screen.
+      2. answer (ASSIST_MODEL, default gpt-6.1-terra, web_search): only for what triage picked.
+    Before this split every ask showed "thinking" and then mostly skipped (15 of 17 asks on
+    2026-11-05), which looked like the AI giving up.
 
-    Environment:
-      OPENAI_API_KEY       required
-      ASSIST_MODEL         default gpt-6.1-terra (fast); gpt-6-luna is cheaper, gpt-6.1-sol smarter
-      ASSIST_WEB_SEARCH    1 (default) to let the model search the web, 0 to turn it off
+    Environment: OPENAI_API_KEY, ASSIST_MODEL, ASSIST_TRIAGE_MODEL,
+    ASSIST_WEB_SEARCH (1 default / 0), ASSIST_TRIAGE (1 default / 0 = one-step).
     """
 
     def __init__(self) -> None:
         from openai import OpenAI
 
         self.model = os.environ.get("ASSIST_MODEL", "gpt-6.1-terra")
+        self.triage_model = os.environ.get("ASSIST_TRIAGE_MODEL", "gpt-6-luna")
         self.web_search = os.environ.get("ASSIST_WEB_SEARCH", "1") != "0"
+        if os.environ.get("ASSIST_TRIAGE", "1") == "0":
+            self.triage = None  # type: ignore[assignment]  # engine falls back to suggest()
         # No SDK retries: a late answer is useless on the glasses, and retrying a rate-limited
         # request only holds up the next one. AssistEngine backs off instead.
         self.client = OpenAI(timeout=30.0, max_retries=0)
 
-    def suggest(self, transcript: list[str], shown: list[str]) -> Assist | None:
-        from openai import RateLimitError
-
+    @staticmethod
+    def _conversation(transcript: list[str], shown: list[str]) -> str:
         prompt = "대화:\n" + "\n".join(f"- {line}" for line in transcript)
         if shown:
             prompt += "\n\n이미 보여준 주제: " + ", ".join(shown)
+        return prompt
+
+    def _call(self, step: str, model: str, instructions: str, prompt: str, search: bool) -> str:
+        from openai import RateLimitError
+
         try:
             raw = self.client.responses.with_raw_response.create(
-                model=self.model,
-                instructions=INSTRUCTIONS,
+                model=model,
+                instructions=instructions,
                 input=prompt,
                 tools=[{"type": "web_search", "search_context_size": "low",
                         "user_location": {"type": "approximate", "country": "KR"}}]
-                if self.web_search else [],
+                if search else [],
             )
         except RateLimitError as e:
             raise RateLimited(retry_after_seconds(str(e), e.response.headers.get("retry-after"))) from e
         response = raw.parse()
         usage = getattr(response, "usage", None)
+        text = response.output_text or ""
         # Rate-limit headers show the account's real per-minute limit (it rises with the tier).
         log.info(
-            "assist: %s tokens in/out %s/%s, TPM limit %s remaining %s, reply %r",
-            self.model,
+            "assist %s: %s tokens in/out %s/%s, TPM limit %s remaining %s, reply %r",
+            step, model,
             getattr(usage, "input_tokens", "?"), getattr(usage, "output_tokens", "?"),
             raw.headers.get("x-ratelimit-limit-tokens"), raw.headers.get("x-ratelimit-remaining-tokens"),
-            (response.output_text or "")[:120],
+            text[:120],
         )
-        return parse_reply(response.output_text)
+        return text
+
+    def triage(self, transcript: list[str], shown: list[str]) -> str | None:
+        reply = self._call("triage", self.triage_model, TRIAGE_INSTRUCTIONS,
+                           self._conversation(transcript, shown), search=False)
+        return parse_topic(reply)
+
+    def answer(self, topic: str, transcript: list[str]) -> Assist | None:
+        prompt = f"질문: {topic}\n\n" + self._conversation(transcript, [])
+        return parse_reply(self._call("answer", self.model, ANSWER_INSTRUCTIONS, prompt, self.web_search))
+
+    def suggest(self, transcript: list[str], shown: list[str]) -> Assist | None:
+        reply = self._call("one-step", self.model, INSTRUCTIONS,
+                           self._conversation(transcript, shown), self.web_search)
+        return parse_reply(reply)
+
+
+def parse_topic(text: str) -> str | None:
+    """Triage reply -> the question to answer, or None for skip / anything unusable."""
+    match = re.search(r"\{.*\}", text or "", re.DOTALL)
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict) or data.get("skip"):
+        return None
+    topic = str(data.get("topic", "")).strip()
+    return topic or None
 
 
 class RateLimited(Exception):
@@ -248,10 +309,20 @@ class AssistEngine:
         self.new_chars = 0
         self.question = False
         transcript = list(self.lines)
-        if self.on_busy is not None:
-            await self.on_busy(True)
+        busy = False
         try:
-            result = await asyncio.to_thread(self.assistant.suggest, transcript, list(self.shown))
+            triage = getattr(self.assistant, "triage", None)
+            if triage is not None:
+                # Step 1 shows nothing; "thinking" only once there is something to answer.
+                topic = await asyncio.to_thread(triage, transcript, list(self.shown))
+                if topic is None:
+                    result = None
+                else:
+                    busy = await self._busy(True)
+                    result = await asyncio.to_thread(self.assistant.answer, topic, transcript)
+            else:
+                busy = await self._busy(True)
+                result = await asyncio.to_thread(self.assistant.suggest, transcript, list(self.shown))
         except RateLimited as e:
             log.warning("assist: %s", e)
             # No ask (not even for a question) until the limit resets.
@@ -260,14 +331,19 @@ class AssistEngine:
         except Exception:
             log.exception("assist failed")
             result = None
-        if self.on_busy is not None:
-            await self.on_busy(False)
+        if busy:
+            await self._busy(False)
         if result is not None:
             if result.title:
                 self.shown.append(result.title)
             await self.send(result)
         self.task = None
         self._maybe_ask()
+
+    async def _busy(self, value: bool) -> bool:
+        if self.on_busy is not None:
+            await self.on_busy(value)
+        return value
 
     def close(self) -> None:
         if self.task is not None:

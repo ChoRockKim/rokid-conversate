@@ -202,3 +202,64 @@ def test_busy_is_reported_around_the_request():
         assert events == [("busy", True), ("busy", False), ("assist", "주제")]
 
     run(main())
+
+
+class TwoStep:
+    def __init__(self, topic):
+        self.topic, self.answered = topic, []
+
+    def triage(self, transcript, shown):
+        return self.topic
+
+    def answer(self, topic, transcript):
+        self.answered.append(topic)
+        return Assist("BTS", "2013년 데뷔")
+
+
+def test_two_step_skip_shows_nothing():
+    async def main():
+        events = []
+
+        async def send(a):
+            events.append("assist")
+
+        async def busy(b):
+            events.append(("busy", b))
+
+        a = TwoStep(None)
+        eng = AssistEngine(a, send, AssistConfig(min_interval_s=0, min_new_chars=1), on_busy=busy)
+        eng.on_final("안녕 잘 들려?")
+        await asyncio.sleep(0.05)
+        assert events == []  # no "thinking" flash for a skip
+        assert a.answered == []
+
+    run(main())
+
+
+def test_two_step_answer_shows_thinking_then_result():
+    async def main():
+        events = []
+
+        async def send(a):
+            events.append(("assist", a.title))
+
+        async def busy(b):
+            events.append(("busy", b))
+
+        a = TwoStep("방탄소년단 데뷔일은?")
+        eng = AssistEngine(a, send, AssistConfig(min_interval_s=0, min_new_chars=1), on_busy=busy)
+        eng.on_final("방탄소년단이 언제 데뷔했더라")
+        await asyncio.sleep(0.05)
+        assert events == [("busy", True), ("busy", False), ("assist", "BTS")]
+        assert a.answered == ["방탄소년단 데뷔일은?"]
+
+    run(main())
+
+
+def test_parse_topic():
+    from conversate.assist import parse_topic
+
+    assert parse_topic('{"topic": "방탄소년단 데뷔일은?"}') == "방탄소년단 데뷔일은?"
+    assert parse_topic('{"skip": true}') is None
+    assert parse_topic('{"topic": ""}') is None
+    assert parse_topic("음") is None
