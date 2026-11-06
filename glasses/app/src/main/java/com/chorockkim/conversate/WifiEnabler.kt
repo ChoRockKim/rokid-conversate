@@ -17,6 +17,8 @@ import android.util.Log
  *      `adb shell pm grant com.chorockkim.conversate android.permission.WRITE_SECURE_SETTINGS`)
  *   2. WifiManager.setWifiEnabled(true)
  *   3. IWifiManager.setWifiEnabled through reflection
+ *   4. the "Wi-Fi 켜기 도우미" app, if installed: apps targeting API 29+ (this one) cannot turn
+ *      Wi-Fi on without the adb grant, but one targeting 28 still can (wifihelper module).
  * It no longer opens the system Wi-Fi settings by itself: that screen is bright and large on
  * the glasses and hid the view. While Wi-Fi is off it retries every [RETRY_MS]; the system
  * screen opens only when the wearer taps the card ([openSystemSettings]).
@@ -78,8 +80,20 @@ class WifiEnabler(private val context: Context, private val onStatus: (Status) -
         }
     }
 
+    /** The "Wi-Fi 켜기 도우미" app (wifihelper module) is installed. */
+    val hasHelper: Boolean
+        get() = runCatching { context.packageManager.getPackageInfo(HELPER, 0); true }.getOrDefault(false)
+
     @Suppress("DEPRECATION")
     private fun tryEnable() {
+        // The helper targets API 28, where apps may still switch Wi-Fi on; this app cannot.
+        if (hasHelper) runCatching {
+            context.sendBroadcast(
+                Intent(HELPER_ACTION).setClassName(HELPER, "$HELPER.WifiOnReceiver")
+                    .addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
+            )
+            Log.i(TAG, "asked the Wi-Fi helper")
+        }.onFailure { Log.i(TAG, "Wi-Fi helper failed: ${it.message}") }
         runCatching {
             val ok = Settings.Global.putInt(context.contentResolver, Settings.Global.WIFI_ON, 1)
             Log.i(TAG, "Settings.Global.WIFI_ON=1 result=$ok")
@@ -100,6 +114,8 @@ class WifiEnabler(private val context: Context, private val onStatus: (Status) -
 
     private companion object {
         const val TAG = "WifiEnabler"
+        const val HELPER = "com.chorockkim.conversate.wifihelper"
+        const val HELPER_ACTION = "$HELPER.WIFI_ON"
         const val POLL_MS = 1_000L
         const val CONNECTED_POLL_MS = 5_000L
         const val RETRY_MS = 10_000L

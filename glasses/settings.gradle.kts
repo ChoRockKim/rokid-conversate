@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "rokid-conversate"
 include(":app")
+include(":wifihelper")

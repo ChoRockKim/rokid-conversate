@@ -89,6 +89,8 @@ adb shell appops set $PKG REQUEST_INSTALL_PACKAGES allow              # 업데�
 adb shell appops set $PKG SYSTEM_ALERT_WINDOW allow                   # 업데이트 뒤 앱 다시 띄우기
 adb shell pm grant $PKG android.permission.WRITE_SECURE_SETTINGS    # 앱 켤 때 Wi-Fi 자동으로 켜기 (없으면 앱 화면에 "켜지 못함" 카드, 탭하면 시스템 설정)
 ```
+Wi-Fi 자동 켜기: adb 권한(`WRITE_SECURE_SETTINGS`) 없이도 되도록 **Wi-Fi 켜기 도우미** 앱(`glasses/wifihelper`, 화면 없음)을 한 번 설치한다. 안드로이드는 targetSdk 28 이하 앱에만 Wi-Fi 켜기를 허용하는데, 본앱은 무확인 OTA 때문에 28로 낮출 수 없어서 따로 뺐다. 빌드: `./gradlew :wifihelper:assembleRelease -PRELEASE_KEYSTORE=… -PRELEASE_KEYSTORE_PASS=…` (실기 미확인)
+
 서버 주소·토큰 설정 (안경에 키보드가 없어서 adb 로 넣는다. 저장되므로 한 번만):
 ```bash
 adb shell am start -n com.chorockkim.conversate/.MainActivity --es config "'CONVERSATE:url=ws://172.20.10.2:8000/ws;token=<토큰>'"

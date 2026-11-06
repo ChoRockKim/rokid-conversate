@@ -2,6 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- The Wi-Fi helper app (wifihelper module) turns Wi-Fi on for us. -->
+    <queries>
+        <package android:name="com.chorockkim.conversate.wifihelper" />
+    </queries>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Turn Wi-Fi on at app start when it is off (WifiEnabler). WRITE_SECURE_SETTINGS is only
          usable when granted over adb; declared so `pm grant` works. -->

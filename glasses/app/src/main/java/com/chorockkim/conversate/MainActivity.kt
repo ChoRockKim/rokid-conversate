@@ -168,8 +168,11 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         WifiEnabler.Status.ENABLING -> HudView.WifiCard("Wi-Fi 켜는 중…", "잠시만 기다려 주세요.")
         WifiEnabler.Status.WAITING_FOR_NETWORK ->
             HudView.WifiCard("Wi-Fi 연결 기다리는 중", "iPhone 개인용 핫스팟을 켜 두면 자동으로 연결됩니다.")
-        WifiEnabler.Status.CANNOT_ENABLE ->
-            HudView.WifiCard("Wi-Fi를 켜지 못했습니다", "계속 다시 시도합니다. 탭하면 시스템 Wi-Fi 설정을 엽니다.")
+        WifiEnabler.Status.CANNOT_ENABLE -> HudView.WifiCard(
+            "Wi-Fi를 켜지 못했습니다",
+            if (wifiEnabler.hasHelper) "계속 다시 시도합니다. 탭하면 시스템 Wi-Fi 설정을 엽니다."
+            else "'Wi-Fi 켜기 도우미' 앱을 설치하면 자동으로 켭니다. 탭하면 시스템 Wi-Fi 설정을 엽니다.",
+        )
         WifiEnabler.Status.CONNECTED, null -> null
     }
 
