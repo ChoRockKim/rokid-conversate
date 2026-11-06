@@ -22,7 +22,7 @@ import com.chorockkim.conversate.ConversateClient.State
  *
  * Input (touchpad, R08 ring with or without R08 Access Bridge):
  *   forward/back = newer/older captions, back (double tap) = back to live captions if scrolled,
- *   otherwise exit. Captions hide after 10 s without speech; any tap or slide brings them back.
+ *   otherwise exit. Captions hide after 10 s without a new caption; any tap or slide brings them back.
  */
 class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     private val main = Handler(Looper.getMainLooper())
@@ -302,7 +302,7 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         when (message) {
             is Protocol.ServerMessage.Caption -> {
                 captions.apply(message)
-                if (message.text.isNotBlank()) return showCaptions()
+                if (message.text.isNotBlank() || message.translation != null) return showCaptions()
             }
             is Protocol.ServerMessage.Error -> notice = "서버 오류: ${message.message}"
             is Protocol.ServerMessage.Assist -> {
@@ -316,17 +316,10 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
                 assist = current.copy(image = bitmap)
             }
             is Protocol.ServerMessage.AssistStatus -> assistBusy = message.busy
-            is Protocol.ServerMessage.Level -> {
-                // The server reports "someone is talking" every 0.25 s. Keep captions up while
-                // that lasts, even when the next caption is a few seconds away (they used to hide,
-                // then reappear all at once).
-                if (message.speech) {
-                    if (captionsHidden) return showCaptions()
-                    main.removeCallbacks(hideCaptions)
-                    main.postDelayed(hideCaptions, CAPTION_HIDE_MS)
-                }
-                return
-            }
+            // The server's "someone is talking" flag no longer keeps captions up: small noises
+            // counted as speech and the captions never hid. Captions (partials come every
+            // 0.8-1.5 s while someone talks) and translations keep them up instead.
+            is Protocol.ServerMessage.Level -> return
             else -> return
         }
         render()

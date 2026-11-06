@@ -30,6 +30,9 @@ class SegmenterConfig:
     vad_mode: int = 1  # 2 dropped a quiet first word ("안녕하세요") at glasses levels
     # ... as long as the frame is at least this loud (int16 RMS), so hiss stays silence.
     webrtc_min_rms: float = 30.0
+    # ... and this many times the background level: WebRTC VAD (mode 1) took small noises for
+    # speech, and the glasses' captions never hid.
+    webrtc_floor_ratio: float = 2.0
     # Energy mode (use_webrtc=False): RMS this many times above the noise floor ...
     speech_ratio: float = 3.0
     # ... and above this absolute level.
@@ -118,7 +121,7 @@ class Segmenter:
         rms = float(np.sqrt(np.mean(frame.astype(np.float32) ** 2)))
         self.last_rms = rms
         if self._vad is not None:
-            is_speech = rms >= cfg.webrtc_min_rms and self._vad.is_speech(
+            is_speech = rms >= max(cfg.webrtc_min_rms, self._noise_floor * cfg.webrtc_floor_ratio) and self._vad.is_speech(
                 frame.astype("<i2").tobytes(), SAMPLE_RATE
             )
         else:

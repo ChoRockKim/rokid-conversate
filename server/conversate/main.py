@@ -20,6 +20,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import threading
 import time
 from collections import deque
@@ -54,6 +55,20 @@ AUDIO_LOG_INTERVAL_S = 5.0
 
 
 _FROM_ENV = object()
+
+# What speech recognition makes up from noise (YouTube outros, broadcast credits, filler):
+# shown, it kept the captions up while nobody talked.
+_NOISE_TEXT = re.compile(
+    r"^\W*(?:시청해\s*주셔서\s*감사합니다|구독과\s*좋아요|좋아요와\s*구독|구독\s*부탁|MBC\s*뉴스|KBS\s*뉴스|SBS\s*뉴스"
+    r"|다음\s*영상에서\s*만나요|자막\s*제공|thanks? for watching|thank you for watching|you|bye|음+|어+|아+|으+|흠+|"
+    r"ご視聴ありがとうございました|字幕|请不吝点赞)[\W\s]*$",
+    re.IGNORECASE,
+)
+
+
+def is_noise_text(text: str) -> bool:
+    t = (text or "").strip()
+    return bool(t) and (bool(_NOISE_TEXT.match(t)) or not re.search(r"\w", t))
 
 
 def create_app(
@@ -398,6 +413,9 @@ class Session:
 
     async def _deliver(self, event: Event, text: str, *, final: bool) -> None:
         seg = event.segment_id
+        if is_noise_text(text):
+            log.info("dropped noise transcript: %r", text)
+            text = ""
         foreign = bool(text and needs_translation(text))
         if not final:
             # Kept even before live translation is up: it opens in the background, and its
