@@ -66,7 +66,11 @@ class HudView(context: Context) : View(context) {
         /** Glasses battery % (null = unknown) and whether it is charging, bottom right. */
         val battery: Int? = null,
         val charging: Boolean = false,
+        /** Wi-Fi not connected yet: the app's own card (instead of the bright system screen). */
+        val wifi: WifiCard? = null,
     )
+
+    data class WifiCard(val title: String, val body: String)
 
     /** [image]: small greyscale picture of the subject (drawn green, right of the text). */
     data class Assist(val title: String, val text: String, val image: Bitmap? = null)
@@ -172,6 +176,7 @@ class HudView(context: Context) : View(context) {
     }
     private val imageRect = RectF()
     private val assistBusy = paint(12f, dim)
+    private val wifiBody = paint(12f, dim)
     private val modalFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
     private val modalBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -213,6 +218,7 @@ class HudView(context: Context) : View(context) {
         drawMic(canvas, s)
 
         drawAnimatedAssist(canvas, s)
+        s.wifi?.let { drawWifi(canvas, it) }
 
         // Captions, bottom-up from just above the hint line.
         if (s.lines.isEmpty()) {
@@ -426,6 +432,26 @@ class HudView(context: Context) : View(context) {
             canvas.drawBitmap(image, null, imageRect, imagePaint)
         }
         if (busy) postInvalidateDelayed(400)
+    }
+
+    /** Wi-Fi card in the middle of the caption area, same look as the AI card, dim text. */
+    private fun drawWifi(canvas: Canvas, card: WifiCard) {
+        val left = (W - MODAL_WIDTH) / 2
+        val right = left + MODAL_WIDTH
+        val inner = (MODAL_WIDTH - 2 * MODAL_PAD).toInt()
+        val body = StaticLayout.Builder.obtain(card.body, 0, card.body.length, wifiBody, inner)
+            .setLineSpacing(0f, 1.1f).setMaxLines(3).setEllipsize(TextUtils.TruncateAt.END).build()
+        val height = 2 * MODAL_PAD + 19f + body.height
+        val top = CAPTION_TOP + 20f
+        modalRect.set(left, top, right, top + height)
+        canvas.drawRoundRect(modalRect, MODAL_RADIUS, MODAL_RADIUS, modalFill)
+        canvas.drawRoundRect(modalRect, MODAL_RADIUS, MODAL_RADIUS, modalBorder)
+        val t = TextUtils.ellipsize(card.title, assistTitle, inner.toFloat(), TextUtils.TruncateAt.END)
+        canvas.drawText(t, 0, t.length, left + MODAL_PAD, top + MODAL_PAD + 12f, assistTitle)
+        canvas.save()
+        canvas.translate(left + MODAL_PAD, top + MODAL_PAD + 19f)
+        body.draw(canvas)
+        canvas.restore()
     }
 
     private fun drawBlock(canvas: Canvas, text: String, paint: TextPaint, bottom: Float) {

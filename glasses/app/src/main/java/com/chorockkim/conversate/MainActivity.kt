@@ -41,6 +41,8 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     private var notice = ""
     // Mic thread only.
     private val gate = SpeechGate()
+    private lateinit var wifiEnabler: WifiEnabler
+    private var wifiStatus: WifiEnabler.Status? = null
     private var micSteps = -1
     private var assist: HudView.Assist? = null
     private var assistBusy = false
@@ -119,8 +121,10 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
                 main.post { client.sendText(Protocol.micLevels(name, levels, rawShare)) }
             },
         )
-        // The glasses keep Wi-Fi off to save battery; this app needs it.
-        WifiEnabler(this) { status -> main.post { onUpdateStatus(status) } }.ensureOn()
+        // The glasses keep Wi-Fi off to save battery; this app needs it. Shown in our own card,
+        // not the system Wi-Fi screen (too bright and large on the glasses).
+        wifiEnabler = WifiEnabler(this) { status -> main.post { wifiStatus = status; render() } }
+        wifiEnabler.start()
         updater = Updater(this, { settings.config }, { main.post(it) })
         updater.listener = this
         notice = setupNotice()
@@ -155,7 +159,18 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
 
     override fun onDestroy() {
         super.onDestroy()
+        wifiEnabler.stop()
         client.shutdown()
+    }
+
+    /** Our own Wi-Fi card (title, body), or null while connected. */
+    private fun wifiCard(status: WifiEnabler.Status?): HudView.WifiCard? = when (status) {
+        WifiEnabler.Status.ENABLING -> HudView.WifiCard("Wi-Fi 켜는 중…", "잠시만 기다려 주세요.")
+        WifiEnabler.Status.WAITING_FOR_NETWORK ->
+            HudView.WifiCard("Wi-Fi 연결 기다리는 중", "iPhone 개인용 핫스팟을 켜 두면 자동으로 연결됩니다.")
+        WifiEnabler.Status.CANNOT_ENABLE ->
+            HudView.WifiCard("Wi-Fi를 켜지 못했습니다", "계속 다시 시도합니다. 탭하면 시스템 Wi-Fi 설정을 엽니다.")
+        WifiEnabler.Status.CONNECTED, null -> null
     }
 
     private fun connectIfConfigured() {
@@ -188,6 +203,10 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     /** All inputs (touchpad keys, R08 ring via the bridge or media keys, swipes) end up here. */
     private fun handle(action: GlassesInput.Action) {
         if (action == GlassesInput.Action.DUPLICATE || action == GlassesInput.Action.NONE) return
+        // Wi-Fi could not be turned on: a tap opens the system Wi-Fi screen (only on request).
+        if (action == GlassesInput.Action.SELECT && wifiStatus == WifiEnabler.Status.CANNOT_ENABLE) {
+            return wifiEnabler.openSystemSettings()
+        }
         // While captions are hidden, a tap or a slide only brings them back.
         if ((captionsHidden || assistHidden) && action != GlassesInput.Action.BACK) {
             if (assist != null) showAssist()
@@ -341,6 +360,7 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
             assist = if (assistHidden) null else assist,
             assistBusy = assistBusy && connected,
             message = message,
+            wifi = wifiCard(wifiStatus),
             battery = battery,
             charging = charging,
             update = updater.available?.versionName,

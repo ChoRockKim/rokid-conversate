@@ -86,6 +86,12 @@ class HudViewSnapshotTest {
         return b
     }
 
+    @Test fun wifiWaiting() = paparazzi.snapshot(
+        hud(HudView.State(connection = "서버 연결 중…", connected = false, battery = 82,
+            wifi = HudView.WifiCard("Wi-Fi 연결 기다리는 중", "iPhone 개인용 핫스팟을 켜 두면 자동으로 연결됩니다."))),
+        "13_wifi_waiting",
+    )
+
     @Test fun aiThinking() = paparazzi.snapshot(
         hud(HudView.State(connection = "연결됨", connected = true, listening = true, level = 900.0, lines = MEETING, assistBusy = true, battery = 64, charging = true)),
         "07_ai_thinking",
