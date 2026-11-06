@@ -13,7 +13,7 @@ iPhone 은 개인용 핫스팟으로 인터넷만 준다 (폰 앱 없음)
 |---|---|
 | `glasses/` | 안경 앱. 화면 크기·여백·입력은 [rokid-glass-ios-navigation](https://github.com/ChoRockKim/rokid-glass-ios-navigation) 의 안경 앱과 같다 |
 | `server/` | WebSocket 서버. 말소리를 문장으로 끊어 Whisper 로 받아쓴다 |
-| `docs/` | [조사 요약](docs/00-summary.md) (G2 Conversate, Rokid 근거, Whisper 실측), [프로토콜](docs/protocol.md) |
+| `docs/` | [조사 요약](docs/00-summary.md) (G2 Conversate, Rokid 근거, Whisper 실측), [프로토콜](docs/protocol.md), [Rokid 앱 개발 노트](docs/rokid-dev-notes.md) |
 
 ## 화면
 

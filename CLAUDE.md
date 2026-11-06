@@ -6,6 +6,7 @@ Rokid 안경에서 대화를 실시간 자막으로 띄운다 (Even Realities G2
 - `README.md` — 구조, 실행, 조작, 확인 상태
 - `docs/00-summary.md` — G2 기능 정리, Rokid 근거, Whisper 실측, 열린 문제
 - `docs/protocol.md` — 안경 ↔ 서버 메시지
+- `docs/rokid-dev-notes.md` — 만들면서 알게 된 Rokid 앱 개발 사실·방법 (다른 Rokid 앱에도 참고)
 
 ## 구성
 - `glasses/` Kotlin 안경 앱. 화면·입력은 `ChoRockKim/rokid-glass-ios-navigation` 의 `glasses-android` (브랜치 `feat/route-server`) 를 따른다: 480x282 논리 단위를 비율 유지해 화면 아래 가운데에, 여백 18, 색 `#00ff66`/`#4da86c`, R08 링은 HudView 하나를 접근성 노드로.
