@@ -124,17 +124,18 @@ class WifiEnabler(private val context: Context, private val onStatus: (Status, S
     @Suppress("DEPRECATION")
     private fun tryEnable() {
         // The helper targets API 28, where apps may still switch Wi-Fi on; this app cannot.
-        // Alternates a background broadcast with its no-UI activity (in case the system only
-        // lets a foreground app switch Wi-Fi).
+        // Its no-UI activity first: on the glasses the broadcast got no answer the first time
+        // (the helper had never run, and the system does not wake such an app for it), then
+        // the activity turned Wi-Fi on (2026-11-06). The broadcast stays as the other attempt.
         if (hasHelper) runCatching {
             if (attempts++ % 2 == 0) {
+                context.startActivity(
+                    Intent().setClassName(HELPER, "$HELPER.WifiOnActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            } else {
                 context.sendBroadcast(
                     Intent(HELPER_ACTION).setClassName(HELPER, "$HELPER.WifiOnReceiver")
                         .addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
-                )
-            } else {
-                context.startActivity(
-                    Intent().setClassName(HELPER, "$HELPER.WifiOnActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 )
             }
             Log.i(TAG, "asked the Wi-Fi helper (attempt $attempts)")

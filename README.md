@@ -51,7 +51,7 @@ iPhone 에서 `https://server-production-24bc.up.railway.app/history`. 확정 �
 | 앞으로 쓸기 (DPAD 오른쪽·아래, R08 링 앞으로) | 최신 쪽으로 |
 | 뒤로 (더블탭, R08 링 더블탭) | 지난 자막을 보던 중이면 최신으로, 아니면 앱 종료 |
 
-**R08 링:** [R08 Access Bridge](https://github.com/Anezium/R08-Access-Bridge) 를 쓰는 경우, 네비 앱과 같은 방식이다. 화면 전체가 포커스·클릭·스크롤 가능한 접근성 노드 하나라서, 링 앞/뒤 = 스크롤 앞/뒤 = 다음/이전, 링 탭 = 클릭 = 선택, 링 더블탭 = 전역 뒤로. 브리지 없이 Stable 모드(미디어 키)로 들어와도 같은 뜻으로 받는다. 위로 쓸기 제스처는 앞으로. (실기 미확인)
+**R08 링:** [R08 Access Bridge](https://github.com/Anezium/R08-Access-Bridge) 를 쓰는 경우, 네비 앱과 같은 방식이다. 화면 전체가 포커스·클릭·스크롤 가능한 접근성 노드 하나라서, 링 앞/뒤 = 스크롤 앞/뒤 = 다음/이전, 링 탭 = 클릭 = 선택, 링 더블탭 = 전역 뒤로. 브리지 없이 Stable 모드(미디어 키)로 들어와도 같은 뜻으로 받는다. 위로 쓸기 제스처는 앞으로. (실기 확인: 보이지 않는 화면 방식으로 켜짐, 2026-11-06)
 
 ## 실행
 
@@ -89,7 +89,7 @@ adb shell appops set $PKG REQUEST_INSTALL_PACKAGES allow              # 업데�
 adb shell appops set $PKG SYSTEM_ALERT_WINDOW allow                   # 업데이트 뒤 앱 다시 띄우기
 adb shell pm grant $PKG android.permission.WRITE_SECURE_SETTINGS    # 앱 켤 때 Wi-Fi 자동으로 켜기 (없으면 앱 화면에 "켜지 못함" 카드, 탭하면 시스템 설정)
 ```
-Wi-Fi 자동 켜기: adb 권한(`WRITE_SECURE_SETTINGS`) 없이도 되도록 **Wi-Fi 켜기 도우미** 앱(`glasses/wifihelper`, 화면 없음)을 한 번 설치한다. 안드로이드는 targetSdk 28 이하 앱에만 Wi-Fi 켜기를 허용하는데, 본앱은 무확인 OTA 때문에 28로 낮출 수 없어서 따로 뺐다. 빌드: `./gradlew :wifihelper:assembleRelease -PRELEASE_KEYSTORE=… -PRELEASE_KEYSTORE_PASS=…` (실기 미확인)
+Wi-Fi 자동 켜기: adb 권한(`WRITE_SECURE_SETTINGS`) 없이도 되도록 **Wi-Fi 켜기 도우미** 앱(`glasses/wifihelper`, 화면 없음)을 한 번 설치한다. 안드로이드는 targetSdk 28 이하 앱에만 Wi-Fi 켜기를 허용하는데, 본앱은 무확인 OTA 때문에 28로 낮출 수 없어서 따로 뺐다. 빌드: `./gradlew :wifihelper:assembleRelease -PRELEASE_KEYSTORE=… -PRELEASE_KEYSTORE_PASS=…` (실기 확인: 보이지 않는 화면 방식으로 켜짐, 2026-11-06)
 
 서버 주소·토큰 설정 (안경에 키보드가 없어서 adb 로 넣는다. 저장되므로 한 번만):
 ```bash
