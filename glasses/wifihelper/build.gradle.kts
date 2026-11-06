@@ -24,8 +24,8 @@ configure<ApplicationExtension> {
         minSdk = 26
         @Suppress("ExpiredTargetSdkVersion")
         targetSdk = 28 // on purpose, see above
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
     }
 
     signingConfigs {

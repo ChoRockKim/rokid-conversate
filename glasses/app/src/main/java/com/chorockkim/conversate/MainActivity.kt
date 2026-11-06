@@ -43,6 +43,7 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     private val gate = SpeechGate()
     private lateinit var wifiEnabler: WifiEnabler
     private var wifiStatus: WifiEnabler.Status? = null
+    private var wifiDetail: String? = null
     private var micSteps = -1
     private var assist: HudView.Assist? = null
     private var assistBusy = false
@@ -123,7 +124,9 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         )
         // The glasses keep Wi-Fi off to save battery; this app needs it. Shown in our own card,
         // not the system Wi-Fi screen (too bright and large on the glasses).
-        wifiEnabler = WifiEnabler(this) { status -> main.post { wifiStatus = status; render() } }
+        wifiEnabler = WifiEnabler(this) { status, detail ->
+            main.post { wifiStatus = status; wifiDetail = detail; render() }
+        }
         wifiEnabler.start()
         updater = Updater(this, { settings.config }, { main.post(it) })
         updater.listener = this
@@ -170,8 +173,7 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
             HudView.WifiCard("Wi-Fi 연결 기다리는 중", "iPhone 개인용 핫스팟을 켜 두면 자동으로 연결됩니다.")
         WifiEnabler.Status.CANNOT_ENABLE -> HudView.WifiCard(
             "Wi-Fi를 켜지 못했습니다",
-            if (wifiEnabler.hasHelper) "계속 다시 시도합니다. 탭하면 시스템 Wi-Fi 설정을 엽니다."
-            else "'Wi-Fi 켜기 도우미' 앱을 설치하면 자동으로 켭니다. 탭하면 시스템 Wi-Fi 설정을 엽니다.",
+            "${wifiDetail ?: ""}\n계속 다시 시도합니다. 탭하면 시스템 Wi-Fi 설정을 엽니다.".trim(),
         )
         WifiEnabler.Status.CONNECTED, null -> null
     }

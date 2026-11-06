@@ -13,5 +13,11 @@
                 <action android:name="com.chorockkim.conversate.wifihelper.WIFI_ON" />
             </intent-filter>
         </receiver>
+        <activity
+            android:name=".WifiOnActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay" />
     </application>
 </manifest>
