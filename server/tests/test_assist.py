@@ -453,3 +453,33 @@ def test_instant_conversion_and_llm_does_not_repeat_it():
         assert a.answered == []  # the LLM's own conversion was skipped as already shown
 
     run(main())
+
+
+def test_triage_decides_web_search():
+    from conversate.assist import Pick, parse_triage
+
+    pick = parse_triage('{"quote":"q","kind":"fact","topic":"뢰스티란?","search":false}')
+    assert pick.search is False
+    assert parse_triage('{"quote":"q","kind":"fact","topic":"오늘 환율은?","search":"true"}').search is True
+    assert parse_triage('{"quote":"q","kind":"fact","topic":"t"}').search is None
+
+    async def main():
+        calls = []
+
+        class A:
+            def triage(self, transcript, shown):
+                return Pick("뢰스티란?", kind="question", search=False)
+
+            def answer(self, topic, transcript, search=None):
+                calls.append(search)
+                return Assist("뢰스티", "스위스 감자 요리이다.")
+
+        async def send(a):
+            pass
+
+        eng = AssistEngine(A(), send, AssistConfig(min_line_chars=1, min_interval_s=0, min_new_chars=1))
+        eng.on_final("뢰스티가 뭐야?")
+        await asyncio.sleep(0.05)
+        assert calls == [False]
+
+    asyncio.run(main())

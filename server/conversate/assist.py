@@ -73,9 +73,10 @@ TRIAGE_INSTRUCTIONS = f"""너는 스마트 안경을 쓴 사용자의 대화를 
   "kind": "question | conversion | term | fact | correction | note | suggest 중 하나",
   "text": "kind 가 suggest 일 때만: 화면에 띄울 메모 한 줄 (\"확인할 점: 납기 일정이 아직 안 나옴\" 처럼 20~50자, 명령·말 걸기 없이)",
   "why": "이 정보가 지금 대화에 왜 도움이 되는지 한 줄",
-  "topic": "대화만 모르는 사람도 이해할 완전한 질문. 대명사·생략은 풀어 쓰고, 끝에 (상황: 지금 무슨 이야기 중인지 한 줄)"}}
+  "topic": "대화만 모르는 사람도 이해할 완전한 질문. 대명사·생략은 풀어 쓰고, 끝에 (상황: 지금 무슨 이야기 중인지 한 줄)",
+  "search": "웹 검색이 꼭 필요하면 true: 가격·환율·일정·영업시간·날씨·경기 결과·최근 소식처럼 바뀌는 정보, 또는 잘 알려지지 않은 사람·가게·제품. 역사·정의·과학·지리·방법·단위 환산처럼 이미 아는 일반 지식이면 false"}}
 예: {{"quote": "이 운동화 110달러였어", "kind": "conversion", "why": "산 물건 가격을 원화로 가늠하려 함",
-     "topic": "운동화 가격 110달러는 원화로 얼마인가? (상황: 해외 직구한 운동화가 비싸다고 이야기 중)"}}
+     "topic": "운동화 가격 110달러는 원화로 얼마인가? (상황: 해외 직구한 운동화가 비싸다고 이야기 중)", "search": true}}
 건너뛸 때: {{"skip": true}}"""
 
 ANSWER_INSTRUCTIONS = """너는 스마트 안경 화면에 짧은 정보를 띄우는 보조다.
@@ -151,9 +152,11 @@ class OpenAIAssistant:
         # Prep notes the wearer wrote on the phone (notes.py); read fresh on every ask.
         self.notes = notes or (lambda: "")
         self.model = os.environ.get("ASSIST_MODEL", "gpt-6.1-terra")
-        # Triage decides what is worth interrupting with; the cheapest model picked off-topic
-        # facts too often, and this call is short (no search), so a stronger model is cheap here.
-        self.triage_model = os.environ.get("ASSIST_TRIAGE_MODEL", "gpt-6.1-terra")
+        # Triage runs every ~15 s of talk and mostly says "skip". It was gpt-6.1-terra because
+        # the cheapest model picked off-topic facts more often; moved back to luna for cost
+        # (2026-11-06; the quote check and dedupe still filter its picks).
+        # ASSIST_TRIAGE_MODEL=gpt-6.1-terra brings the stronger one back.
+        self.triage_model = os.environ.get("ASSIST_TRIAGE_MODEL", "gpt-6-luna")
         self.web_search = os.environ.get("ASSIST_WEB_SEARCH", "1") != "0"
         if os.environ.get("ASSIST_TRIAGE", "1") == "0":
             self.triage = None  # type: ignore[assignment]  # engine falls back to suggest()
@@ -219,9 +222,12 @@ class OpenAIAssistant:
                            self._conversation(transcript, shown), search=False)
         return parse_triage(reply)
 
-    def answer(self, topic: str, transcript: list[str]) -> Assist | None:
+    def answer(self, topic: str, transcript: list[str], search: bool | None = None) -> Assist | None:
+        """[search]: triage's call. Web search was the biggest cost (each answer with it read
+        ~9,500 tokens of results, plus the tool call), even for general knowledge."""
         prompt = f"질문: {topic}\n\n" + self._conversation(transcript, [])
-        return parse_reply(self._call("answer", self.model, ANSWER_INSTRUCTIONS, prompt, self.web_search))
+        use_search = self.web_search and (search is None or search)
+        return parse_reply(self._call("answer", self.model, ANSWER_INSTRUCTIONS, prompt, use_search))
 
     def suggest(self, transcript: list[str], shown: list[str]) -> Assist | None:
         reply = self._call("one-step", self.model, INSTRUCTIONS,
@@ -271,6 +277,7 @@ class Pick:
     quote: str | None = None  # None: not checked (one-step or test assistants)
     why: str = ""
     text: str = ""  # suggest: shown as is, no answer step
+    search: bool | None = None  # triage: does the answer need web search (None: not said)
 
     @property
     def prompt(self) -> str:
@@ -303,7 +310,16 @@ def parse_triage(text: str) -> Pick | None:
         quote=str(data.get("quote", "")).strip(),
         why=str(data.get("why", "")).strip(),
         text=str(data.get("text", "")).strip(),
+        search=_flag(data.get("search")),
     )
+
+
+def _flag(value) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip().lower() in ("true", "false"):
+        return value.strip().lower() == "true"
+    return None
 
 
 def quote_heard(quote: str, new_lines: list[str]) -> bool:
@@ -389,7 +405,7 @@ def assistant_from_env(notes: Callable[[], str] | None = None) -> Assistant | No
 @dataclass
 class AssistConfig:
     # Ask at most this often ...
-    min_interval_s: float = 8.0
+    min_interval_s: float = 15.0  # was 8; halved the triage calls (cost), questions still go at 2 s
     # ... and only once this much new speech has been transcribed since the last ask.
     min_new_chars: int = 20
     # A finished caption that looks like a question is asked right away (only this gap).
@@ -506,7 +522,11 @@ class AssistEngine:
                     result = Assist(SUGGEST_TITLE, note) if note else None
                 else:
                     busy = await self._busy(True)
-                    result = await asyncio.to_thread(self.assistant.answer, pick.prompt, transcript)
+                    if pick.search is None:
+                        result = await asyncio.to_thread(self.assistant.answer, pick.prompt, transcript)
+                    else:
+                        result = await asyncio.to_thread(
+                            self.assistant.answer, pick.prompt, transcript, search=pick.search)
             else:
                 busy = await self._busy(True)
                 result = await asyncio.to_thread(self.assistant.suggest, transcript, list(self.shown))

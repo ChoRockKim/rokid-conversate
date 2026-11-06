@@ -46,7 +46,7 @@ log = logging.getLogger("conversate")
 
 LEVEL_INTERVAL_S = 0.25
 # Live translation closes after this long without foreign speech (it is billed per minute open).
-LIVE_IDLE_S = 60.0
+LIVE_IDLE_S = 20.0  # billed per minute open; was 60
 # Audio kept for replay into a live translation session that opens mid-utterance.
 REPLAY_MAX_S = 8.0
 # Live pieces held for an utterance with no partial yet are dropped after this long.
