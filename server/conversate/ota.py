@@ -8,12 +8,6 @@ Other glasses apps share this server for their updates, each in its own folder (
 
   GET /apps/<name>/latest, /apps/<name>/download    public (these APKs carry no server token)
   PUT /apps/<name>/upload?versionCode=..&versionName=..   OTA_UPLOAD_TOKEN
-  PUT/GET /apps/<name>/signing                       OTA_UPLOAD_TOKEN: the app's release signing
-                                                     key bundle, so a fresh build machine can sign
-                                                     the next update (opaque bytes, max 64 KB)
-
-For /apps/* the upload token may also come as an `X-Upload-Token` header (a build machine can
-inject it there without touching the Authorization header used for the glasses token).
 
 Only names listed in OTA_PUBLIC_APPS (comma-separated, default "rokid-youtube") exist.
 
@@ -33,12 +27,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse
 
 log = logging.getLogger(__name__)
 
 MAX_APK = 80 * 1024 * 1024
-MAX_SIGNING = 64 * 1024
 
 
 def bearer(request: Request) -> str:
@@ -98,17 +91,6 @@ def ota_router(
         if not check(bearer(request), upload_token):
             raise HTTPException(401, "unauthorized")
 
-    def require_app_uploader(request: Request) -> None:
-        given = request.headers.get("x-upload-token", "").strip()
-        if given.lower().startswith("bearer "):
-            given = given[7:].strip()
-        given = given or bearer(request)
-        if not given:
-            # Says only whether a token came at all, never anything about its value.
-            raise HTTPException(401, "no upload token")
-        if not check(given, upload_token):
-            raise HTTPException(401, "unauthorized")
-
     def store(name: str) -> _Store:
         s = others.get(name)
         if s is None:
@@ -140,31 +122,8 @@ def ota_router(
 
     @router.put("/apps/{name}/upload")
     async def upload_app(request: Request, name: str, versionCode: int = 0, versionName: str = "") -> dict:
-        require_app_uploader(request)
+        require_uploader(request)
         return await store(name).upload(request, versionCode, versionName)
-
-    @router.put("/apps/{name}/signing")
-    async def put_signing(request: Request, name: str) -> dict:
-        require_app_uploader(request)
-        s = store(name)
-        body = await request.body()
-        if not body or len(body) > MAX_SIGNING:
-            raise HTTPException(400, "empty or too large")
-        s.directory.mkdir(parents=True, exist_ok=True)
-        tmp = s.directory / "signing.bin.part"
-        tmp.write_bytes(body)
-        tmp.chmod(0o600)
-        tmp.replace(s.directory / "signing.bin")
-        log.info("ota signing bundle stored: %s (%d bytes)", name, len(body))
-        return {"size": len(body), "sha256": hashlib.sha256(body).hexdigest()}
-
-    @router.get("/apps/{name}/signing")
-    def get_signing(request: Request, name: str) -> Response:
-        require_app_uploader(request)
-        f = store(name).directory / "signing.bin"
-        if not f.exists():
-            raise HTTPException(404, "no signing bundle")
-        return Response(f.read_bytes(), media_type="application/octet-stream")
 
     return router
 
