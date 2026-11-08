@@ -99,7 +99,13 @@ def ota_router(
             raise HTTPException(401, "unauthorized")
 
     def require_app_uploader(request: Request) -> None:
-        given = request.headers.get("x-upload-token", "") or bearer(request)
+        given = request.headers.get("x-upload-token", "").strip()
+        if given.lower().startswith("bearer "):
+            given = given[7:].strip()
+        given = given or bearer(request)
+        if not given:
+            # Says only whether a token came at all, never anything about its value.
+            raise HTTPException(401, "no upload token")
         if not check(given, upload_token):
             raise HTTPException(401, "unauthorized")
 

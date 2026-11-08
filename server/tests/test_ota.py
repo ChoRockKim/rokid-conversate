@@ -126,3 +126,12 @@ def test_signing_bundle_is_private(tmp_path):
     assert c.get("/apps/rokid-youtube/download").status_code == 404
     assert c.put(url, headers=UPLOAD, content=b"x" * (64 * 1024 + 1)).status_code == 400
     assert c.put("/apps/other/signing", headers=UPLOAD, content=bundle).status_code == 404
+
+
+def test_upload_token_header_is_forgiving_and_says_when_missing(tmp_path):
+    c = apps_client(tmp_path)
+    url = "/apps/rokid-youtube/signing"
+    assert c.get(url).json()["detail"] == "no upload token"
+    assert c.get(url, headers={"X-Upload-Token": "nope"}).json()["detail"] == "unauthorized"
+    assert c.get(url, headers={"X-Upload-Token": " Bearer up "}).status_code == 404
+    assert c.get(url, headers={"X-Upload-Token": "up\n"}).status_code == 404
