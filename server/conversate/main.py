@@ -49,8 +49,12 @@ LEVEL_INTERVAL_S = 0.25
 LIVE_IDLE_S = 20.0  # billed per minute open; was 60
 # Audio kept for replay into a live translation session that opens mid-utterance.
 REPLAY_MAX_S = 8.0
-# Live pieces held for an utterance with no partial yet are dropped after this long.
-LIVE_HOLD_S = 4.0
+# A finished utterance's end in the live session's audio time: when its final is cut, minus
+# this (the segmenter waits for ~0.7 s of silence before cutting).
+LIVE_BOUND_BACK_MS = 350.0
+# A finished utterance still takes late live pieces this long after its sentence translation
+# was compared (and kept).
+LIVE_TAIL_S = 3.0
 AUDIO_LOG_INTERVAL_S = 5.0
 
 
@@ -163,10 +167,10 @@ class Session:
         self.live_factory = live_factory
         self.live: LiveTranslator | None = None
         self.live_until = 0.0
-        # Live Korean is attached to our own captions: [live_seg] is the segment it is being
-        # written under, [live_text] what arrived for it so far.
-        self.live_seg: int | None = None
-        self.live_text = ""
+        # Live Korean is attached to our own captions by audio time: [live_bounds] is where each
+        # finished utterance ended in the live session's audio, [live_texts] the Korean so far.
+        self.live_bounds: dict[int, float] = {}
+        self.live_texts: dict[int, str] = {}
         self.partial_text: dict[int, str] = {}   # newest partial text of a segment in progress
         self.final_text: dict[int, str] = {}     # foreign finals waiting for their text translation
         self.recent: deque[bytes] = deque()      # last REPLAY_MAX_S of audio
@@ -174,9 +178,6 @@ class Session:
         self.recent_total = 0                    # bytes ever added (to find what came later)
         self.partial_language: dict[int, str | None] = {}
         self.live_starting = False
-        self.live_piece_at = 0.0
-        self.live_claimed: int | None = None
-        self.live_only: set[int] = set()         # foreign finals translated by the live stream
         self.assist = (
             AssistEngine(ai, self._send_assist, on_busy=self._send_assist_busy, converter=converter)
             if ai is not None else None
@@ -255,6 +256,8 @@ class Session:
                     else:
                         await self.live.feed(pcm)
                 for event in self.segmenter.feed(pcm):
+                    if event.kind == "final":
+                        self._mark_live_bound(event.segment_id)
                     self._enqueue(event)
                 now = time.monotonic()
                 if now - last_level >= LEVEL_INTERVAL_S:
@@ -364,6 +367,7 @@ class Session:
                 text = await self._run_stt(event)
                 if text is None:
                     continue
+                text = await self._check_foreign(event, text)
                 self.last_final_id = max(self.last_final_id, event.segment_id)
                 await self._deliver(event, text, final=True)
 
@@ -411,6 +415,28 @@ class Session:
         )
         return text
 
+    async def _check_foreign(self, event: Event, text: str) -> str:
+        """A final that came back foreign is checked against the sound itself (Whisper base,
+        ~0.3 s): if that says Korean, it is transcribed again as Korean. In real use 282 of
+        3,621 lines were "foreign", among them Korean speech written as English or Japanese
+        ("Groits.", "Purification.", "お尻が見たいよ。"), which also opened live translation and
+        got a made-up translation."""
+        if not text or not needs_translation(text) or is_noise_text(text):
+            return text
+        detect = getattr(self.stt, "detect_language", None)
+        korean = getattr(self.stt, "transcribe_korean", None)
+        if detect is None or korean is None:
+            return text
+        try:
+            if await asyncio.to_thread(detect, event.audio) != "ko":
+                return text
+            again = (await asyncio.to_thread(korean, event.audio)).strip()
+        except Exception:
+            log.exception("foreign check failed")
+            return text
+        log.info("foreign check: %r was Korean speech -> %r", text, again)
+        return again
+
     async def _deliver(self, event: Event, text: str, *, final: bool) -> None:
         seg = event.segment_id
         if is_noise_text(text):
@@ -422,31 +448,24 @@ class Session:
             # first pieces attach to this caption at once.
             self.partial_text[seg] = text
             if self.live is not None:
-                await self._live_claim(seg)
-                await self._send_caption(seg, text, False, self._live_for(seg, text))
+                await self._send_caption(seg, text, False, self._live_text_for(seg, text))
             elif text:
                 await self._send_caption(seg, text, False, None)
             return
         self.partial_text.pop(seg, None)
         if text and self.history is not None:
             await self._record(self.history.add_line(text))
-        live = self._live_for(seg, text) if self.live is not None else None
-        await self._send_caption(seg, text, True, live)
         if foreign:
+            self.final_text[seg] = text
+            await self._send_caption(seg, text, True, self._live_text_for(seg, text))
             if self.live is not None:
                 self.live_until = time.monotonic() + LIVE_IDLE_S
-            self.final_text[seg] = text
-            if live:
-                # The live stream already translated it: keep that (the late tail still
-                # streams in) instead of swapping in the sentence translation a second later,
-                # which made the text jump.
-                self.live_only.add(seg)
-            elif self.translator is not None:
+            if self.translator is not None:
                 asyncio.create_task(self._translate(seg, text))
             await self._start_live()
-        elif self.live_seg == seg:
-            # Korean speech: whatever the translator made of it is not wanted.
-            self.live_seg, self.live_text = None, ""
+        else:
+            await self._send_caption(seg, text, True, None)
+            self.live_texts.pop(seg, None)  # Korean speech: the translator's version is not wanted
         if text and self.assist is not None:
             self.assist.on_final(text)
 
@@ -456,75 +475,52 @@ class Session:
             message["translation"] = translation
         await self.send(message)
 
-    async def _live_claim(self, seg: int) -> None:
-        """A new utterance started: live Korean from now on belongs to it. Pieces arriving after
-        the previous utterance's final (the translation lags speech) went to that one."""
-        if self.live_claimed == seg:
-            return
-        self.live_claimed = seg
-        # Pieces held for an utterance that had no partial yet carry over to this one, unless
-        # they are from long ago (an English video's last words ended up under the first
-        # Japanese line, 2026-11-05).
-        held = self.live_seg is not None and self.live_seg > self.last_final_id
-        if held and time.monotonic() - self.live_piece_at > LIVE_HOLD_S:
-            held = False
-        if not held:
-            if self.live_seg is not None and self.live_seg < seg:
-                await self._settle_live()
-            self.live_text = ""
-        self.live_seg = seg
+    def _mark_live_bound(self, seg: int) -> None:
+        """An utterance was just cut: remember where it ended in the live session's audio."""
+        fed_ms = getattr(self.live, "fed_ms", None) if self.live is not None else None
+        if isinstance(fed_ms, (int, float)):
+            self.live_bounds[seg] = max(0.0, fed_ms - LIVE_BOUND_BACK_MS)
+            for old in sorted(self.live_bounds)[:-20]:
+                del self.live_bounds[old]
 
-    async def _settle_live(self) -> None:
-        """The live stream is done with [live_seg]: if its translation is the one shown, record
-        it in the history (the sentence translation path records its own)."""
-        seg = self.live_seg
-        if seg is None or seg not in self.live_only:
-            return
-        self.live_only.discard(seg)
-        text = self.final_text.pop(seg, None)
-        korean = self.live_text.strip()
-        if text and korean and self.history is not None:
-            await self._record(self.history.add_translation(text, korean))
+    def _live_seg_for(self, elapsed_ms: float | None) -> int:
+        """The utterance a live piece belongs to: the first one that ended after the piece's
+        audio time, else the one being spoken now. By arrival order, the end of one sentence's
+        translation (1-2 s late) landed under the next one and lines read one step off."""
+        if elapsed_ms is not None:
+            later = [seg for seg, end in self.live_bounds.items() if end >= elapsed_ms]
+            if later:
+                return min(later)
+        return self.segmenter._next_id
 
-    def _live_for(self, seg: int, text: str) -> str | None:
-        if self.live_seg != seg or not self.live_text.strip():
-            return None
-        if text and not needs_translation(text):
-            return None  # Korean speech
-        return self.live_text.strip()
+    def _live_text_for(self, seg: int, text: str) -> str | None:
+        korean = self.live_texts.get(seg, "").strip()
+        if not korean or (text and not needs_translation(text)):
+            return None  # nothing yet, or Korean speech
+        return korean
 
-    async def _on_live_korean(self, piece: str) -> None:
+    async def _on_live_korean(self, piece: str, elapsed_ms: float | None = None) -> None:
         self.live_until = time.monotonic() + LIVE_IDLE_S
-        if (self.live_seg is not None and self.live_seg > self.last_final_id
-                and self.live_seg not in self.partial_text
-                and time.monotonic() - self.live_piece_at > LIVE_HOLD_S):
-            self.live_text = ""  # stale held pieces: drop them (see _live_claim)
-        self.live_piece_at = time.monotonic()
-        finished = self.live_seg is not None and self.live_seg <= self.last_final_id
-        if self.live_seg is None or (finished and (
-                self.live_seg not in self.final_text or self.segmenter._state.in_speech)):
-            # Translation before the utterance's first partial (language detection makes that
-            # ~1 s late): it belongs to the next utterance, not the finished one. A finished
-            # one only takes "tail" pieces until its sentence translation arrives, and not
-            # once someone is talking again. (Its start was dropped, 2026-11-05.)
-            await self._settle_live()
-            self.live_seg, self.live_text = self.last_final_id + 1, ""
-        if not self.live_text:
-            piece = piece.lstrip()
-        self.live_text += piece
-        seg = self.live_seg
-        if seg in self.partial_text:
+        seg = self._live_seg_for(elapsed_ms)
+        so_far = self.live_texts.get(seg, "")
+        self.live_texts[seg] = so_far + (piece if so_far else piece.lstrip())
+        for old in sorted(self.live_texts)[:-20]:
+            del self.live_texts[old]
+        korean = self.live_texts[seg].strip()
+        if not korean:
+            return
+        if seg in self.final_text:
+            # A finished foreign utterance: its late pieces (until the sentence translation
+            # replaced it, or a few seconds after it was kept).
+            await self._send_caption(seg, self.final_text[seg], True, korean)
+        elif seg in self.partial_text:
             text = self.partial_text[seg]
-            if not text or needs_translation(text):
-                await self._send_caption(seg, text, False, self.live_text.strip())
+            if (not text or needs_translation(text)) and self.partial_language.get(seg) != "ko":
+                await self._send_caption(seg, text, False, korean)
         elif seg > self.last_final_id and self.partial_language.get(seg) not in (None, "ko"):
             # Foreign speech whose first partial is still being transcribed (Whisper on CPU,
-            # ~1 s): show the translation now, the original joins it when ready. (It waited for
-            # the partial, which made Japanese start at 3.3 s.)
-            await self._send_caption(seg, "", False, self.live_text.strip())
-        elif seg in self.final_text:
-            # Tail of a finished utterance (until its sentence translation replaces it, if any).
-            await self._send_caption(seg, self.final_text[seg], True, self.live_text.strip())
+            # ~1 s): show the translation now, the original joins it when ready.
+            await self._send_caption(seg, "", False, korean)
 
     async def _start_live(self, replay_s: float = 0.0) -> None:
         self.live_until = time.monotonic() + LIVE_IDLE_S
@@ -535,8 +531,6 @@ class Session:
             await self._open_live(replay_s)
         finally:
             self.live_starting = False
-        self.live_piece_at = 0.0
-        self.live_claimed: int | None = None
 
     async def _open_live(self, replay_s: float) -> None:
         started = time.monotonic()
@@ -560,27 +554,47 @@ class Session:
 
     async def _stop_live(self) -> None:
         live, self.live = self.live, None
-        await self._settle_live()
-        self.live_seg, self.live_text = None, ""
+        self.live_bounds.clear()
         if live is not None:
             await live.stop()
 
     async def _translate(self, segment_id: int, text: str) -> None:
-        """Foreign speech: send the same caption again with a Korean "translation" field."""
+        """Sentence translation of a foreign final. Shown unless the live translation already
+        on screen says much the same (then it stays, so the text does not jump); the history
+        always gets this one (aligned with its original)."""
         try:
             korean = await asyncio.to_thread(self.translator.translate, text)
         except Exception:
             log.exception("translation failed")
-            return
-        finally:
             self.final_text.pop(segment_id, None)
-        if korean:
-            if self.history is not None:
-                await self._record(self.history.add_translation(text, korean))
-            await self.send(
-                {"type": "caption", "id": segment_id, "text": text, "final": True, "translation": korean}
-            )
+            return
+        if not korean:
+            self.final_text.pop(segment_id, None)
+            return
+        if self.history is not None:
+            await self._record(self.history.add_translation(text, korean))
+        shown = self.live_texts.get(segment_id, "").strip()
+        if shown and same_meaning(shown, korean):
+            # Keep the live one; let its last pieces still come in for a moment.
+            asyncio.get_running_loop().call_later(LIVE_TAIL_S, self.final_text.pop, segment_id, None)
+            return
+        if shown:
+            log.info("live translation replaced: %r -> %r", shown[:60], korean[:60])
+        self.final_text.pop(segment_id, None)
+        await self.send(
+            {"type": "caption", "id": segment_id, "text": text, "final": True, "translation": korean}
+        )
 
+
+def same_meaning(live: str, sentence: str) -> bool:
+    """Two translations of the same sentence share most characters and are about as long;
+    one shifted by a line (or cut short) does not."""
+    import difflib
+
+    a, b = re.sub(r"[\W_]+", "", live), re.sub(r"[\W_]+", "", sentence)
+    if not a or not b or not 0.6 <= len(a) / len(b) <= 1.7:
+        return False
+    return difflib.SequenceMatcher(None, a, b).ratio() >= 0.5
 
 def app() -> FastAPI:
     """Factory for `uvicorn conversate.main:app --factory`."""

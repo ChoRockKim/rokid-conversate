@@ -78,13 +78,15 @@ class KoreanJoiner:
 
 class LiveTranslator:
     """One OpenAI translation session. [on_korean] gets each piece of the Korean translation as
-    it arrives, with spaces restored ([KoreanJoiner]); the caller decides which caption it
-    belongs to. The source-language transcript of this API is not used: it arrived 30 s late and
+    it arrives, with spaces restored ([KoreanJoiner]), and the piece's `elapsed_ms`: where in
+    the audio fed to this session the translated words are (it follows the input: a 1.4 s
+    replay gave its first piece at 1000 ms, 2026-11-05). With [fed_ms] the caller puts each
+    piece under the utterance it belongs to. The source-language transcript of this API is not used: it arrived 30 s late and
     in one burst (2026-11-05), so the original comes from our own speech recognition."""
 
     def __init__(
         self,
-        on_korean: Callable[[str], Awaitable[None]],
+        on_korean: Callable[..., Awaitable[None]],
         model: str | None = None,
         language: str = "ko",
         connect: Callable | None = None,
@@ -96,6 +98,7 @@ class LiveTranslator:
         self.ws = None
         self.reader: asyncio.Task | None = None
         self.joiner = KoreanJoiner()
+        self.fed_samples = 0  # 16 kHz samples given to this session (replay included)
         self.logged_deltas = 0
         self.closed = asyncio.Event()
 
@@ -119,6 +122,7 @@ class LiveTranslator:
     async def feed(self, pcm16k: bytes) -> None:
         if self.ws is None or self.closed.is_set():
             return
+        self.fed_samples += len(pcm16k) // 2
         audio = resample_16k_to_24k(pcm16k)
         if audio:
             await self.ws.send(json.dumps(
@@ -141,7 +145,8 @@ class LiveTranslator:
                         log.info("live delta %r elapsed_ms=%s", delta, event.get("elapsed_ms"))
                     piece = self.joiner.add(delta, time.monotonic())
                     if piece:
-                        await self.on_korean(piece)
+                        elapsed = event.get("elapsed_ms")
+                        await self.on_korean(piece, elapsed if isinstance(elapsed, (int, float)) else None)
                 elif kind == "error":
                     log.warning("live translation error: %s", event.get("error"))
                 elif kind == "session.closed":
@@ -150,6 +155,10 @@ class LiveTranslator:
             log.exception("live translation reader failed")
         finally:
             self.closed.set()
+
+    @property
+    def fed_ms(self) -> float:
+        return self.fed_samples / 16.0
 
     async def stop(self) -> None:
         if self.ws is None:

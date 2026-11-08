@@ -155,11 +155,12 @@ class OpenAITranscriber:
         self.languages = [x for x in os.environ.get("STT_LANGUAGES", "ko,en,ja,zh").split(",") if x.strip()]
         self.client = OpenAI(timeout=20.0, max_retries=1)
 
-    def transcribe(self, audio: np.ndarray, *, partial: bool) -> str:
+    def transcribe(self, audio: np.ndarray, *, partial: bool, languages: list[str] | None = None) -> str:
         extra = {}
-        if self.languages:
+        languages = languages or self.languages
+        if languages:
             # gpt-transcribe takes a list ("languages"); older models a single "language".
-            extra = {"languages": self.languages} if self.model == "gpt-transcribe" else {"language": self.languages[0]}
+            extra = {"languages": languages} if self.model == "gpt-transcribe" else {"language": languages[0]}
         result = self.client.audio.transcriptions.create(
             model=self.model,
             file=("utterance.wav", to_wav(normalize(audio)), "audio/wav"),
@@ -184,6 +185,18 @@ class HybridTranscriber:
     def partial_in(self, audio: np.ndarray, language: str | None) -> str:
         partial_in = getattr(self.local, "partial_in", None)
         return partial_in(audio, language) if partial_in else self.local.transcribe(audio, partial=True)
+
+    def transcribe_korean(self, audio: np.ndarray) -> str:
+        """Again, as Korean: short Korean utterances came back as English or Japanese
+        ("Groits.", "お尻が見たいよ。") and got a made-up translation."""
+        try:
+            return self.final.transcribe(audio, partial=False, languages=["ko"])
+        except TypeError:  # a final backend without the languages option
+            pass
+        except Exception:
+            log.exception("Korean re-transcription failed")
+        partial_in = getattr(self.local, "partial_in", None)
+        return partial_in(audio, "ko") if partial_in else ""
 
     def transcribe(self, audio: np.ndarray, *, partial: bool) -> str:
         if partial:

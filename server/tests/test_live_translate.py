@@ -50,7 +50,7 @@ def test_session_flow():
     async def main():
         pieces = []
 
-        async def on_korean(piece):
+        async def on_korean(piece, elapsed_ms=None):
             pieces.append(piece)
 
         ws = FakeWs([

@@ -264,36 +264,46 @@ def test_foreign_partial_opens_live_early_and_replays_audio():
     assert opened == []
 
 
-def test_live_pieces_before_first_partial_go_to_the_next_utterance():
-    """Translation of a new utterance can arrive before its first partial. Once the previous
-    utterance has its sentence translation, those pieces start the next caption."""
-    import asyncio
+class _Ws:
+    def __init__(self):
+        self.sent = []
+
+    async def send_text(self, t):
+        self.sent.append(json.loads(t))
+
+
+class _Stt:
+    def transcribe(self, audio, *, partial):
+        return ""
+
+
+def _session():
     from conversate.main import Session
 
-    class Ws:
-        def __init__(self):
-            self.sent = []
+    return Session(_Ws(), _Stt())
 
-        async def send_text(self, t):
-            self.sent.append(json.loads(t))
 
-    class Stt:
-        def transcribe(self, audio, *, partial):
-            return ""
+def test_live_pieces_go_to_the_utterance_of_their_audio_time():
+    """The end of sentence #3's translation arrives while #4 is being spoken: by its audio time
+    it still goes under #3 (by arrival order it used to start #4's line)."""
+    import asyncio
 
     async def main():
-        ws = Ws()
-        s = Session(ws, Stt())
-        s.live = object()  # only "is not None" matters here
-        s.last_final_id = 1
-        s.live_seg, s.live_text = 1, "실례합니다."
-        await s._on_live_korean("좋은 식당을")  # #1 already translated (not in final_text)
-        assert (s.live_seg, s.live_text) == (2, "좋은 식당을")
-        await s._live_claim(2)
-        assert s.live_text == "좋은 식당을"
-        await s._on_live_korean(" 찾고")
-        s.partial_text[2] = "I am looking for a good restaurant"
-        assert s._live_for(2, s.partial_text[2]) == "좋은 식당을 찾고"
+        s = _session()
+        s.live = object()
+        s.segmenter._next_id = 4
+        s.last_final_id = 3
+        s.live_bounds = {3: 4000.0}
+        s.final_text[3] = "I'm from Indonesia."
+        s.partial_text[4] = "Sending greetings"
+        s.partial_language[4] = "en"
+        await s._on_live_korean("인도네시아에서 왔어요.", 3600)
+        await s._on_live_korean("모두에게", 4800)
+        sent = s.ws.sent
+        assert sent[0] == {"type": "caption", "id": 3, "text": "I'm from Indonesia.", "final": True,
+                           "translation": "인도네시아에서 왔어요."}
+        assert sent[1] == {"type": "caption", "id": 4, "text": "Sending greetings", "final": False,
+                           "translation": "모두에게"}
 
     asyncio.run(main())
 
@@ -302,53 +312,76 @@ def test_foreign_translation_shows_before_its_first_partial_text():
     """Language known (foreign) but the partial not transcribed yet: the translation goes out
     with an empty original. Unknown or Korean: held back."""
     import asyncio
-    from conversate.main import Session
-
-    class Ws:
-        def __init__(self):
-            self.sent = []
-
-        async def send_text(self, t):
-            self.sent.append(json.loads(t))
-
-    class Stt:
-        def transcribe(self, audio, *, partial):
-            return ""
 
     async def main():
-        ws = Ws()
-        s = Session(ws, Stt())
+        s = _session()
         s.live = object()
+        s.segmenter._next_id = 4
         s.last_final_id = 3
         await s._on_live_korean("오늘은")          # language of #4 not known yet
-        assert ws.sent == []
+        assert s.ws.sent == []
         s.partial_language[4] = "ja"
         await s._on_live_korean(" 평소보다")
-        assert ws.sent[-1] == {"type": "caption", "id": 4, "text": "", "final": False, "translation": "오늘은 평소보다"}
+        assert s.ws.sent[-1] == {"type": "caption", "id": 4, "text": "", "final": False,
+                                 "translation": "오늘은 평소보다"}
 
     asyncio.run(main())
 
 
-def test_stale_held_translation_is_dropped():
+def test_korean_speech_written_as_foreign_is_transcribed_again():
     import asyncio
-    import time as _t
+    import numpy as np
     from conversate.main import Session
-
-    class Ws:
-        async def send_text(self, t):
-            pass
+    from conversate.segmenter import Event
 
     class Stt:
+        def __init__(self, language):
+            self.language = language
+
         def transcribe(self, audio, *, partial):
             return ""
 
+        def detect_language(self, audio):
+            return self.language
+
+        def transcribe_korean(self, audio):
+            return "오시리가 보고 싶어"
+
+    event = Event("final", np.zeros(16000, dtype=np.float32), 5)
+
     async def main():
-        s = Session(Ws(), Stt())
-        s.live = object()
-        s.last_final_id = 3
-        await s._on_live_korean("로켓은 가장 쓰기 쉬운")   # held for #4, then a long silence
-        s.live_piece_at = _t.monotonic() - 30
-        await s._live_claim(4)
-        assert s.live_text == ""
+        s = Session(_Ws(), Stt("ko"))
+        assert await s._check_foreign(event, "お尻が見たいよ。") == "오시리가 보고 싶어"
+        s = Session(_Ws(), Stt("ja"))
+        assert await s._check_foreign(event, "とてもいい。") == "とてもいい。"
+        assert await s._check_foreign(event, "어제 산 운동화") == "어제 산 운동화"
+
+    asyncio.run(main())
+
+
+def test_sentence_translation_replaces_a_shifted_live_one_only():
+    import asyncio
+
+    class Tr:
+        def __init__(self, korean):
+            self.korean = korean
+
+        def translate(self, text):
+            return self.korean
+
+    async def main():
+        s = _session()
+        s.translator = Tr("실례합니다, 가장 가까운 지하철역이 어디인가요?")
+        s.final_text[2] = "Excuse me, where is the nearest subway station?"
+        s.live_texts[2] = "실례합니다, 제일 가까운 지하철역이 어디예요?"
+        await s._translate(2, s.final_text[2])
+        assert s.ws.sent == []  # same meaning: the live one stays
+
+        s.translator = Tr("모두에게 인사를 전합니다.")
+        s.final_text[3] = "Sending greetings to everyone."
+        s.live_texts[3] = "인도네시아에서 왔고 이 팟캐스트 보면서"
+        await s._translate(3, s.final_text[3])
+        assert s.ws.sent[-1]["translation"] == "모두에게 인사를 전합니다."
+        assert 3 not in s.final_text  # late pieces no longer overwrite it
 
     asyncio.run(main())

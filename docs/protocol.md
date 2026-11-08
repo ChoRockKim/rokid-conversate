@@ -22,7 +22,7 @@ WebSocket 하나로 오간다. 주소는 `ws://<서버>:8000/ws` (외부에서�
 | `{"type":"ready"}` | hello 확인. 이제 오디오를 보내도 됨 |
 | `{"type":"level","rms":123.4,"speech":false,"received_ms":5000}` | 0.25초마다. 서버가 받은 소리 크기(int16 RMS), 말하는 중인지, 지금까지 받은 길이. 마이크·네트워크 점검용 |
 | `{"type":"caption","id":3,"text":"...","final":false}` | 자막. 같은 `id` 의 `final:false` 는 계속 덮어쓰고, `final:true` 가 오면 확정 |
-| `{"type":"caption","id":3,"text":"Where is it?","final":true,"translation":"어디예요?"}` | 외국어였을 때, 확정 자막 뒤에 같은 `id` 로 한국어 번역이 따로 온다. 안경은 원문(연한 회색) 아래 번역(흰색). 외국어가 들리면 그 뒤 20초 동안 실시간 번역(gpt-realtime-translate)이 열려, 다음 발화부터는 미확정 자막(`final:false`)에도 `translation` 이 붙어 말하는 동안 번역이 자라고. 원문은 서버 STT(부분: 첫 부분 자막(0.8초)에서 Whisper base 로 언어 감지 후 그 언어로, 확정: gpt-transcribe). 외국어로 감지되면 그 자리에서 실시간 번역을 열고 그때까지의 소리를 다시 보낸다. 실시간 번역이 붙은 문장은 확정 후에도 문장 번역으로 바꾸지 않는다(글이 튀어서) |
+| `{"type":"caption","id":3,"text":"Where is it?","final":true,"translation":"어디예요?"}` | 외국어였을 때, 확정 자막 뒤에 같은 `id` 로 한국어 번역이 따로 온다. 안경은 원문(연한 회색) 아래 번역(흰색). 외국어가 들리면 그 뒤 20초 동안 실시간 번역(gpt-realtime-translate)이 열려, 다음 발화부터는 미확정 자막(`final:false`)에도 `translation` 이 붙어 말하는 동안 번역이 자라고. 원문은 서버 STT(부분: 첫 부분 자막(0.8초)에서 Whisper base 로 언어 감지 후 그 언어로, 확정: gpt-transcribe). 외국어로 감지되면 그 자리에서 실시간 번역을 열고 그때까지의 소리를 다시 보낸다. 번역 조각은 도착 순서가 아니라 조각의 `elapsed_ms`(번역 세션에 넣은 소리 기준 시각)로, 그 시각에 말하던 문장에 붙인다. 확정 후 문장 번역을 만들어, 실시간 번역과 뜻이 비슷하면 그대로 두고(글이 튀지 않게) 많이 다르면 바꾼다. 받아쓰기가 외국어라도 소리로 다시 판정(Whisper base)해 한국어면 한국어로 다시 받아쓴다 |
 | `{"type":"error","message":"..."}` | 오류. 연결은 유지 |
 | `{"type":"assist_status","busy":true}` | AI 요청 시작(true)/끝(false). 안경은 그동안 `생각 중…` |
 | `{"type":"assist","title":"...","text":"..."}` | 화면 위쪽 30% 의 AI 결과 (용어 설명, 검색 답, 인물·회사 배경). `text` 가 비면 지움. 서버에 `OPENAI_API_KEY` 가 있을 때만 |
