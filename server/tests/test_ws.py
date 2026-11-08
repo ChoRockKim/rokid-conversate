@@ -71,7 +71,7 @@ def test_wrong_sample_rate_is_an_error():
 def test_speech_produces_final_caption_and_levels():
     stt = FakeTranscriber()
     with client(stt).websocket_connect("/ws", headers=AUTH) as ws:
-        ws.send_text(json.dumps({"type": "hello"}))
+        ws.send_text(json.dumps({"type": "hello", "levels": True}))
         assert json.loads(ws.receive_text())["type"] == "ready"
         audio = silence(500) + tone(1000) + silence(1000)
         step = 3200  # 100 ms
@@ -410,3 +410,16 @@ def test_live_pieces_follow_the_logged_production_timing():
         assert s.live_texts[2] == "저는 근"
 
     asyncio.run(main())
+
+
+def test_no_level_messages_unless_asked():
+    """Battery: the glasses do not ask for levels, so none are sent."""
+    with client(FakeTranscriber()).websocket_connect("/ws", headers=AUTH) as ws:
+        ws.send_text(json.dumps({"type": "hello"}))
+        assert json.loads(ws.receive_text())["type"] == "ready"
+        audio = silence(500) + tone(1000) + silence(1000)
+        for i in range(0, len(audio), 3200):
+            ws.send_bytes(audio[i : i + 3200])
+        seen = []
+        read_until(ws, lambda m: seen.append(m["type"]) or (m["type"] == "caption" and m["final"]))
+        assert "level" not in seen

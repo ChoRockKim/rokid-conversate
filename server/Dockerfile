@@ -21,4 +21,4 @@ RUN python -c "from faster_whisper import WhisperModel; WhisperModel('base', dev
 COPY conversate ./conversate
 
 # Railway sets PORT.
-CMD ["sh", "-c", "uvicorn conversate.main:app --factory --host 0.0.0.0 --port ${PORT:-8000} --ws-ping-interval 15 --ws-ping-timeout 20"]
+CMD ["sh", "-c", "uvicorn conversate.main:app --factory --host 0.0.0.0 --port ${PORT:-8000} --ws-ping-interval 30 --ws-ping-timeout 30"]

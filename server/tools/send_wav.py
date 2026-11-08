@@ -36,7 +36,7 @@ async def main() -> None:
 
     headers = {"Authorization": f"Bearer {args.token}"} if args.token else {}
     async with websockets.connect(args.url, additional_headers=headers) as ws:
-        await ws.send(json.dumps({"type": "hello", "sample_rate": 16000, "format": "pcm_s16le"}))
+        await ws.send(json.dumps({"type": "hello", "sample_rate": 16000, "format": "pcm_s16le", "levels": True}))
         start = time.monotonic()
         done = asyncio.Event()
 

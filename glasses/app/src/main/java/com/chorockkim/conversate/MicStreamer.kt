@@ -195,8 +195,8 @@ class MicStreamer(
         const val CHUNK_FRAMES = Protocol.SAMPLE_RATE / 10
         /** 1.5 s of nothing but zeros = this source is silenced. */
         const val SILENT_PROBE_CHUNKS = 15
-        /** Per-channel levels every 5 s. */
-        const val LEVEL_REPORT_CHUNKS = 50
+        /** Per-channel levels every 60 s (diagnostics; was 5 s, battery). */
+        const val LEVEL_REPORT_CHUNKS = 600
 
         /** Rokid's 8-channel layout (0,1 processed · 2..5 raw capsules · 6,7 echo reference). */
         const val ROKID_8CH_MASK = 0x6000FC

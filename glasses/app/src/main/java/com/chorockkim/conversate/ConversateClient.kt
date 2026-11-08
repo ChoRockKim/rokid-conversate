@@ -21,7 +21,9 @@ class ConversateClient(
     private val callbackExecutor: Executor,
     private val listener: Listener,
     private val http: OkHttpClient = OkHttpClient.Builder()
-        .pingInterval(15, TimeUnit.SECONDS)
+        // Battery: the server already pings every 30 s; ours (was 15 s) only needs to notice a
+        // dead connection during long silences, when no audio is sent.
+        .pingInterval(60, TimeUnit.SECONDS)
         .build(),
 ) {
     enum class State { IDLE, CONNECTING, CONNECTED, READY, WAITING_RETRY }

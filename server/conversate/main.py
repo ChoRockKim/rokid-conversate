@@ -180,6 +180,7 @@ class Session:
         self.recent_total = 0                    # bytes ever added (to find what came later)
         self.partial_language: dict[int, str | None] = {}
         self.live_starting = False
+        self.want_levels = False
         self.assist = (
             AssistEngine(ai, self._send_assist, on_busy=self._send_assist_busy, converter=converter)
             if ai is not None else None
@@ -262,7 +263,10 @@ class Session:
                         self._mark_live_bound(event.segment_id)
                     self._enqueue(event)
                 now = time.monotonic()
-                if now - last_level >= LEVEL_INTERVAL_S:
+                # Battery: only for clients that ask ({"type":"hello","levels":true}, e.g. test
+                # tools). The glasses no longer use them, and 4 messages a second kept their
+                # Wi-Fi busy while someone talked.
+                if self.want_levels and now - last_level >= LEVEL_INTERVAL_S:
                     last_level = now
                     await self.send(
                         {
@@ -335,6 +339,7 @@ class Session:
                     {"type": "error", "message": "expected 16 kHz mono pcm_s16le audio"}
                 )
                 return
+            self.want_levels = bool(msg.get("levels"))
             await self.send({"type": "ready"})
         elif kind == "mic":
             pass  # diagnostics from the glasses (audio source); already logged above
@@ -538,6 +543,7 @@ class Session:
             await self._open_live(replay_s)
         finally:
             self.live_starting = False
+        self.want_levels = False
 
     async def _open_live(self, replay_s: float) -> None:
         started = time.monotonic()
