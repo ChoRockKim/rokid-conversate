@@ -49,9 +49,11 @@ LEVEL_INTERVAL_S = 0.25
 LIVE_IDLE_S = 20.0  # billed per minute open; was 60
 # Audio kept for replay into a live translation session that opens mid-utterance.
 REPLAY_MAX_S = 8.0
-# A finished utterance's end in the live session's audio time: when its final is cut, minus
-# this (the segmenter waits for ~0.7 s of silence before cutting).
-LIVE_BOUND_BACK_MS = 350.0
+# elapsed_ms runs 0.5-1.3 s behind the words it translates (it is the output's time: "station"
+# came at 3800 ms although the sentence was cut before that, 2026-11-08). A finished utterance
+# keeps taking pieces this long after its cut, until its translation ends a sentence.
+LIVE_LAG_MS = 2000.0
+_SENTENCE_DONE = re.compile(r"[.?!。？！…]\s*$")
 # A finished utterance still takes late live pieces this long after its sentence translation
 # was compared (and kept).
 LIVE_TAIL_S = 3.0
@@ -479,18 +481,23 @@ class Session:
         """An utterance was just cut: remember where it ended in the live session's audio."""
         fed_ms = getattr(self.live, "fed_ms", None) if self.live is not None else None
         if isinstance(fed_ms, (int, float)):
-            self.live_bounds[seg] = max(0.0, fed_ms - LIVE_BOUND_BACK_MS)
+            self.live_bounds[seg] = fed_ms
             for old in sorted(self.live_bounds)[:-20]:
                 del self.live_bounds[old]
 
     def _live_seg_for(self, elapsed_ms: float | None) -> int:
-        """The utterance a live piece belongs to: the first one that ended after the piece's
-        audio time, else the one being spoken now. By arrival order, the end of one sentence's
-        translation (1-2 s late) landed under the next one and lines read one step off."""
+        """The utterance a live piece belongs to, by its time: one that was cut after it, or
+        one cut a little before it whose translation has not ended its sentence yet (the
+        translation lags); else the one being spoken now. By arrival order, the end of one
+        sentence's translation landed under the next one and lines read one step off."""
         if elapsed_ms is not None:
-            later = [seg for seg, end in self.live_bounds.items() if end >= elapsed_ms]
-            if later:
-                return min(later)
+            for seg in sorted(self.live_bounds):
+                end = self.live_bounds[seg]
+                if elapsed_ms <= end:
+                    return seg
+                done = _SENTENCE_DONE.search(self.live_texts.get(seg, "").strip())
+                if elapsed_ms <= end + LIVE_LAG_MS and not done:
+                    return seg
         return self.segmenter._next_id
 
     def _live_text_for(self, seg: int, text: str) -> str | None:

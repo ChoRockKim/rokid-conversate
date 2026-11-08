@@ -385,3 +385,28 @@ def test_sentence_translation_replaces_a_shifted_live_one_only():
         assert 3 not in s.final_text  # late pieces no longer overwrite it
 
     asyncio.run(main())
+
+
+def test_live_pieces_follow_the_logged_production_timing():
+    """Production, 2026-11-08 (English clip): sentence #1 was cut around 4100 ms of session
+    audio, its translation's last words came at 4200-4600 ms, the next sentence's at 8200 ms.
+    "역이 어디인가요?" used to land under #2."""
+    import asyncio
+
+    async def main():
+        s = _session()
+        s.live = object()
+        s.segmenter._next_id = 2
+        s.last_final_id = 1
+        s.live_bounds = {1: 4100.0}
+        s.final_text[1] = "Excuse me, where is the nearest subway station?"
+        s.partial_language[2] = "en"
+        for piece, at in [("실", 1000), ("례", 1000), ("합니다", 1200), (",", 1600), (" 가", 2400),
+                          ("장", 2600), (" 가까", 3000), ("운", 3200), (" 지", 3400), ("하", 3400),
+                          ("철", 3600), ("역", 3800), ("이", 4000), ("인가", 4200), (" 어디", 4200),
+                          ("요", 4600), ("?", 4600), (" 저", 8200), ("는", 8400), (" 근", 8800)]:
+            await s._on_live_korean(piece, at)
+        assert s.live_texts[1] == "실례합니다, 가장 가까운 지하철역이인가 어디요?"
+        assert s.live_texts[2] == "저는 근"
+
+    asyncio.run(main())
