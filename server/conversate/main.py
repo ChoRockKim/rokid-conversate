@@ -54,6 +54,7 @@ REPLAY_MAX_S = 8.0
 # keeps taking pieces this long after its cut, until its translation ends a sentence.
 LIVE_LAG_MS = 2000.0
 _SENTENCE_DONE = re.compile(r"[.?!。？！…]\s*$")
+_SENTENCE_END_ANY = re.compile(r"[。？！]+|[.?!]+(?=\s|$)")
 # A finished utterance still takes late live pieces this long after its sentence translation
 # was compared (and kept).
 LIVE_TAIL_S = 3.0
@@ -500,10 +501,20 @@ class Session:
                 end = self.live_bounds[seg]
                 if elapsed_ms <= end:
                     return seg
-                done = _SENTENCE_DONE.search(self.live_texts.get(seg, "").strip())
-                if elapsed_ms <= end + LIVE_LAG_MS and not done:
+                if elapsed_ms <= end + LIVE_LAG_MS and not self._live_done(seg):
                     return seg
         return self.segmenter._next_id
+
+    def _live_done(self, seg: int) -> bool:
+        """The translation of a finished utterance is complete: it has as many sentence ends as
+        the original (once transcribed), else just ends a sentence. A two-sentence Japanese
+        line was closed after its first sentence and the second went to the next line."""
+        korean = self.live_texts.get(seg, "").strip()
+        original = self.final_text.get(seg)
+        if original:
+            wanted = max(1, len(_SENTENCE_END_ANY.findall(original.strip().rstrip(".?!。？！") + "。")))
+            return len(_SENTENCE_END_ANY.findall(korean)) >= wanted
+        return bool(_SENTENCE_DONE.search(korean))
 
     def _live_text_for(self, seg: int, text: str) -> str | None:
         korean = self.live_texts.get(seg, "").strip()

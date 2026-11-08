@@ -423,3 +423,24 @@ def test_no_level_messages_unless_asked():
         seen = []
         read_until(ws, lambda m: seen.append(m["type"]) or (m["type"] == "caption" and m["final"]))
         assert "level" not in seen
+
+
+def test_a_two_sentence_line_keeps_its_second_sentence():
+    """Production, 2026-11-08 (Japanese): "…元気ですね。ちょっと走ってきました。" was closed after
+    the first translated sentence, and "조금 뛰고 왔어요" went to the next line."""
+    import asyncio
+
+    async def main():
+        s = _session()
+        s.live = object()
+        s.segmenter._next_id = 2
+        s.last_final_id = 1
+        s.live_bounds = {1: 5800.0}
+        s.final_text[1] = "今日はいつもより元気ですね。ちょっと走ってきました。"
+        for piece, at in [("오늘은", 3000), (" 평소보다", 3600), (" 힘차네요", 4400), (".", 4600),
+                          (" 조금", 5800), (" 뛰고", 6000), (" 왔어요", 6400), (".", 6800), (" 어제", 12000)]:
+            await s._on_live_korean(piece, at)
+        assert s.live_texts[1] == "오늘은 평소보다 힘차네요. 조금 뛰고 왔어요."
+        assert s.live_texts[2] == "어제"
+
+    asyncio.run(main())
