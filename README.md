@@ -107,6 +107,7 @@ scripts/release.sh 2 0.2.0 --upload   # versionCode 는 매번 올린다
 - 확인은 앱을 켤 때라, 새 버전이 있으면 바로 설치하고 다시 켠다. 진행 상황은 아래 줄에, 받을 버전은 오른쪽 아래 `새 버전 0.2.0`.
 - 위의 `-i` 설치나 `appops` 가 빠졌으면 안드로이드가 설치 확인 창을 띄운다 (그때는 한 번 눌러야 함).
 - 서버 쪽: `PUT /app/upload` (업로드 토큰), `GET /app/latest`·`/app/download` (안경 토큰). APK 는 Railway 볼륨 `/data/ota` 에 하나만 보관.
+- 다른 안경 앱도 같은 서버로 업데이트한다: `/apps/<이름>/latest`·`/download` (토큰 없이 공개, 서버 토큰이 든 APK 는 올리지 말 것), `PUT /apps/<이름>/upload` (같은 업로드 토큰). 이름은 `OTA_PUBLIC_APPS` (기본 `rokid-youtube`), 파일은 `/data/ota/<이름>/`.
 - **릴리스 키를 잃어버리면 OTA 로는 더 이상 업데이트할 수 없다** (지우고 케이블로 다시 설치).
 - 실기 미확인: Rokid 펌웨어가 확인 창 없는 설치와 업데이트 뒤 자동 실행을 허용하는지.
 
