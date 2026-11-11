@@ -49,8 +49,6 @@ class HudView(context: Context) : View(context) {
         /** Connection problem worth highlighting (shown white instead of dim). */
         val connectionAlert: Boolean = false,
         val listening: Boolean = false,
-        /** Mic RMS on the int16 scale, measured on the glasses. */
-        val level: Double = 0.0,
         val lines: List<Captions.Line> = emptyList(),
         val scrollBack: Int = 0,
         /** Shown in the caption area when there are no captions (setup hints, errors). */
@@ -87,7 +85,8 @@ class HudView(context: Context) : View(context) {
     data class WifiCard(val title: String, val body: String)
 
     /** [image]: small greyscale picture of the subject (drawn green, right of the text). */
-    data class Assist(val title: String, val text: String, val image: Bitmap? = null)
+    /** [counter]: which card of the history this is ("2/5"), drawn at the end of the title row. */
+    data class Assist(val title: String, val text: String, val image: Bitmap? = null, val counter: String? = null)
 
     var onInput: ((GlassesInput.Action) -> Unit)? = null
 
@@ -207,7 +206,6 @@ class HudView(context: Context) : View(context) {
         strokeWidth = 1f
         color = Color.parseColor("#4da86c")
     }
-    private val bars = Paint(Paint.ANTI_ALIAS_FLAG)
 
     /** Logical unit -> real pixels (1 on a 480 px wide screen). */
     private var k = 1f
@@ -302,21 +300,7 @@ class HudView(context: Context) : View(context) {
 
     private fun drawMic(canvas: Canvas, s: State) {
         if (s.menu != null) return  // nothing is recorded on the menu
-        var x = W - MARGIN
-        if (s.listening) {
-            // Five rising bars, filled up to the level.
-            val steps = levelSteps(s.level)
-            val barW = 4f
-            val gap = 2f
-            x -= LEVEL_STEPS * barW + (LEVEL_STEPS - 1) * gap
-            for (i in 0 until LEVEL_STEPS) {
-                val h = 12f * (i + 2f) / (LEVEL_STEPS + 1f)
-                val left = x + i * (barW + gap)
-                bars.color = if (i < steps) green else Color.parseColor("#1f4a2e")
-                canvas.drawRect(left, TOP_BASELINE - h, left + barW, TOP_BASELINE, bars)
-            }
-            x -= 6f
-        }
+        val x = W - MARGIN
         val state = if (s.listening) "듣는 중" else "정지됨"
         val label = if (s.mode != null && s.menu == null) "${s.mode} · $state" else state
         small.color = if (s.listening) green else dim
@@ -447,7 +431,11 @@ class HudView(context: Context) : View(context) {
         canvas.clipRect(modalRect)
         var y = ASSIST_TOP + MODAL_PAD
         if (titleH > 0f) {
-            val busyW = if (busy) assistBusy.measureText("생각 중...") + 8f else 0f
+            assist.counter?.let { c ->
+                canvas.drawText(c, left + MODAL_PAD + textW - assistBusy.measureText(c), y + 12f, assistBusy)
+            }
+            val counterW = assist.counter?.let { assistBusy.measureText(it) + 8f } ?: 0f
+            val busyW = (if (busy) assistBusy.measureText("생각 중...") + 8f else 0f) + counterW
             val t = TextUtils.ellipsize("✦ $title", assistTitle, textW - busyW, TextUtils.TruncateAt.END)
             canvas.drawText(t, 0, t.length, left + MODAL_PAD, y + 12f, assistTitle)
             if (busy) canvas.drawText(thinking, left + MODAL_PAD + textW - busyW + 8f, y + 12f, assistBusy)
@@ -555,19 +543,8 @@ class HudView(context: Context) : View(context) {
         const val CAPTION_BOTTOM = H - 30f
         const val CAPTION_SIZE = 13f
         const val LINE_GAP = 4f
-        const val LEVEL_STEPS = 5
         /** Caption rows on screen: the current one plus about four before it. */
         const val MAX_LINES = 5
-
-        /** ~300 is quiet speech, ~3000+ is loud (int16 RMS, same scale as the server). */
-        fun levelSteps(rms: Double): Int = when {
-            rms < 100 -> 0
-            rms < 300 -> 1
-            rms < 800 -> 2
-            rms < 1800 -> 3
-            rms < 3500 -> 4
-            else -> 5
-        }
 
         fun clockText(epochMs: Long): String =
             java.text.SimpleDateFormat("HH:mm", java.util.Locale.KOREA).format(java.util.Date(epochMs))

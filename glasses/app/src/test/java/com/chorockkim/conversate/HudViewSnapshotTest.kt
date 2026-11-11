@@ -49,14 +49,14 @@ class HudViewSnapshotTest {
     }
 
     @Test fun listening() = paparazzi.snapshot(
-        hud(HudView.State(connection = "연결됨", connected = true, listening = true, level = 1200.0, lines = MEETING, assist = ASSIST, battery = 82)),
+        hud(HudView.State(connection = "연결됨", connected = true, listening = true, lines = MEETING, assist = ASSIST, battery = 82)),
         "01_listening",
     )
 
     @Test fun longConversationCutsFromTop() = paparazzi.snapshot(
         hud(
             HudView.State(
-                connection = "연결됨", connected = true, listening = true, level = 400.0, assist = ASSIST,
+                connection = "연결됨", connected = true, listening = true, assist = ASSIST,
                 lines = MEETING.map { it.copy(final = true) } + listOf(
                     Line(4, "그래서 이번 분기에는 검색 광고를 줄이고 영상 광고 비중을 늘리는 쪽으로 제안드립니다.", true),
                     Line(5, "영상 광고는 전환율이 어떻게 나왔나요?", true),
@@ -68,7 +68,7 @@ class HudViewSnapshotTest {
     )
 
     @Test fun aiCardWithPicture() = paparazzi.snapshot(
-        hud(HudView.State(connection = "연결됨", connected = true, listening = true, level = 900.0, lines = MEETING, battery = 82,
+        hud(HudView.State(connection = "연결됨", connected = true, listening = true, lines = MEETING, battery = 82,
             assist = HudView.Assist("경복궁", "1395년 조선 태조가 세운 첫 법궁이다. 정문은 광화문이다.", picture()))),
         "12_ai_card_picture",
     )
@@ -110,26 +110,32 @@ class HudViewSnapshotTest {
         "16_settings",
     )
 
+    @Test fun pastAiCardInTranslationOnlyMode() = paparazzi.snapshot(
+        hud(HudView.State(connection = "연결됨", connected = true, listening = true, battery = 82, mode = "일상 · 번역만",
+            assist = ASSIST.copy(counter = "2/5"))),
+        "17_ai_history",
+    )
+
     @Test fun listeningInLectureMode() = paparazzi.snapshot(
-        hud(HudView.State(connection = "연결됨", connected = true, listening = true, level = 900.0,
+        hud(HudView.State(connection = "연결됨", connected = true, listening = true,
             lines = MEETING, battery = 82, mode = Mode.LECTURE.title, drain = "−6%/h")),
         "15_lecture_mode",
     )
 
     @Test fun aiThinking() = paparazzi.snapshot(
-        hud(HudView.State(connection = "연결됨", connected = true, listening = true, level = 900.0, lines = MEETING, assistBusy = true, battery = 64, charging = true)),
+        hud(HudView.State(connection = "연결됨", connected = true, listening = true, lines = MEETING, assistBusy = true, battery = 64, charging = true)),
         "07_ai_thinking",
     )
 
     @Test fun aiThinkingOverOldResult() = paparazzi.snapshot(
-        hud(HudView.State(connection = "연결됨", connected = true, listening = true, level = 900.0, lines = MEETING, assist = ASSIST, assistBusy = true)),
+        hud(HudView.State(connection = "연결됨", connected = true, listening = true, lines = MEETING, assist = ASSIST, assistBusy = true)),
         "08_ai_thinking_with_result",
     )
 
     @Test fun foreignSpeechWithTranslation() = paparazzi.snapshot(
         hud(
             HudView.State(
-                listening = true, connected = true, level = 900.0, battery = 70,
+                listening = true, connected = true, battery = 70,
                 lines = listOf(
                     Line(1, "첫 번째 안건은 광고 채널 정리입니다.", true),
                     Line(2, "Where is the nearest subway station?", true, isOriginal = true),
@@ -141,12 +147,12 @@ class HudViewSnapshotTest {
     )
 
     @Test fun noAssistYet() = paparazzi.snapshot(
-        hud(HudView.State(connection = "연결됨", connected = true, listening = true, level = 1200.0, lines = MEETING)),
+        hud(HudView.State(connection = "연결됨", connected = true, listening = true, lines = MEETING)),
         "06_no_assist",
     )
 
     @Test fun waitingForSpeech() = paparazzi.snapshot(
-        hud(HudView.State(connection = "연결됨", connected = true, listening = true, level = 20.0, notice = "", battery = 12)),
+        hud(HudView.State(connection = "연결됨", connected = true, listening = true, notice = "", battery = 12)),
         "03_waiting_for_speech",
     )
 
@@ -159,7 +165,7 @@ class HudViewSnapshotTest {
         hud(
             HudView.State(
                 connection = "연결 끊김 · Failed to connect · 4초 후 재시도", connectionAlert = true,
-                listening = true, level = 50.0, lines = MEETING.take(2), scrollBack = 2,
+                listening = true, lines = MEETING.take(2), scrollBack = 2,
             )
         ),
         "05_reconnecting_scrolled",
@@ -188,7 +194,7 @@ class HudViewFullScreenSnapshotTest {
             animate = false
             clock = { 1_793_854_800_000L }
             state = HudView.State(
-                connection = "연결됨", connected = true, listening = true, level = 1200.0, assist = ASSIST_FULL,
+                connection = "연결됨", connected = true, listening = true, assist = ASSIST_FULL,
                 lines = listOf(
                     Captions.Line(1, "안녕하세요. 오늘 회의에서는 다음 분기 마케팅 예산을 논의하겠습니다.", true),
                     Captions.Line(2, "첫 번째 안건은 광고 채널 정리입니다.", true),

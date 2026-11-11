@@ -42,7 +42,6 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     private var connection = "연결 안 됨"
     private var connected = false
     private var connectionAlert = false
-    private var level = 0.0
     private var notice = ""
     // Read on the mic thread; replaced when the mode changes.
     @Volatile private var gate = SpeechGate()
@@ -77,8 +76,11 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     private lateinit var wifiEnabler: WifiEnabler
     private var wifiStatus: WifiEnabler.Status? = null
     private var wifiDetail: String? = null
-    private var micSteps = -1
     private var assist: HudView.Assist? = null
+    /** AI cards of this session, oldest first; with Korean captions off, swipes browse them. */
+    private val assistHistory = ArrayDeque<HudView.Assist>()
+    /** How many cards back from the newest is shown (0 = newest). */
+    private var assistBack = 0
     private var assistBusy = false
     private var battery: Int? = null
     private var charging = false
@@ -144,19 +146,15 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
                     if (idlePaused) main.post { resumeFromIdle() }
                 }
                 for (out in outs) encodeOrNull(out)?.let(::sendOrQueue)
-                // Redraw only when the level bars change, not 10 times a second.
-                val steps = HudView.levelSteps(rms)
-                if (steps != micSteps) {
-                    micSteps = steps
-                    main.post { level = rms; render() }
-                }
+                // No level bars any more (battery: they redrew the screen whenever anyone spoke).
             },
             onError = { message -> main.post { notice = message; render() } },
             onSource = { name, silent ->
                 main.post {
                     // Also tell the server, so its log shows which source the glasses ended up on.
                     client.sendText(Protocol.mic(name, silent))
-                    onUpdateStatus(if (silent) "마이크 무음 ($name) · 다른 앱이 마이크를 쓰는 중일 수 있음" else "마이크: $name")
+                    // Only a problem is shown (the source name at the bottom left was noise).
+                    if (silent) onUpdateStatus("마이크 무음 ($name) · 다른 앱이 마이크를 쓰는 중일 수 있음")
                 }
             },
             onChannelLevels = { name, levels, rawShare ->
@@ -377,6 +375,18 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
             }
             return render()
         }
+        // Korean captions off: the screen is mostly the AI card, so swipes go through past cards.
+        if (!settings.koreanCaptions && assistHistory.isNotEmpty() &&
+            (action == GlassesInput.Action.PREVIOUS || action == GlassesInput.Action.NEXT)
+        ) {
+            assistBack = if (action == GlassesInput.Action.PREVIOUS) {
+                (assistBack + 1).coerceAtMost(assistHistory.size - 1)
+            } else {
+                (assistBack - 1).coerceAtLeast(0)
+            }
+            assist = assistHistory.elementAt(assistHistory.size - 1 - assistBack)
+            return showAssist()
+        }
         // While captions are hidden, a tap or a slide only brings them back.
         if ((captionsHidden || assistHidden) && action != GlassesInput.Action.BACK) {
             if (assist != null) showAssist()
@@ -428,7 +438,6 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         if (!mic.isRunning) return
         mic.stop()
         client.sendText(Protocol.stop())
-        level = 0.0
         notice = setupNotice()
         render()
     }
@@ -497,13 +506,20 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
             is Protocol.ServerMessage.Error -> notice = "서버 오류: ${message.message}"
             is Protocol.ServerMessage.Assist -> {
                 assist = if (message.text.isBlank()) null else HudView.Assist(message.title, message.text)
+                assist?.let {
+                    assistHistory.addLast(it)
+                    while (assistHistory.size > MAX_ASSIST_HISTORY) assistHistory.removeFirst()
+                    assistBack = 0
+                }
                 if (assist != null) return showAssist()
             }
             is Protocol.ServerMessage.AssistImage -> {
-                val current = assist ?: return
-                if (current.title != message.title) return  // a newer card replaced it
+                // The picture belongs to the newest card with that title (shown or in history).
+                val index = assistHistory.indexOfLast { it.title == message.title }
+                if (index < 0) return
                 val bitmap = android.graphics.BitmapFactory.decodeByteArray(message.png, 0, message.png.size) ?: return
-                assist = current.copy(image = bitmap)
+                assistHistory[index] = assistHistory[index].copy(image = bitmap)
+                if (assist?.title == message.title) assist = assist?.copy(image = bitmap)
             }
             is Protocol.ServerMessage.AssistStatus -> assistBusy = message.busy
             // The server's "someone is talking" flag no longer keeps captions up: small noises
@@ -523,12 +539,15 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
             connected = connected,
             connectionAlert = connectionAlert,
             listening = mic.isRunning,
-            level = level,
             lines = if (captionsHidden) emptyList() else captions.visible(HudView.MAX_LINES),
             scrollBack = captions.scrollBack,
             // The idle hint goes away with the captions; errors stay.
             notice = if (captionsHidden && notice == setupNotice()) "" else notice,
-            assist = if (assistHidden) null else assist,
+            assist = if (assistHidden) null else assist?.let {
+                if (!settings.koreanCaptions && assistHistory.size > 1) {
+                    it.copy(counter = "${assistHistory.size - assistBack}/${assistHistory.size}")
+                } else it
+            },
             assistBusy = assistBusy && connected,
             message = message,
             wifi = wifiCard(wifiStatus),
@@ -587,6 +606,7 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         /** About 6 s of audio kept while (re)connecting. */
         const val MAX_PENDING = 60
         const val DIM_BRIGHTNESS = 0.01f
+        const val MAX_ASSIST_HISTORY = 20
         const val OPUS_ENABLED = false
     }
 }

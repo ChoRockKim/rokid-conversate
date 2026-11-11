@@ -11,11 +11,6 @@ class MicStreamerTest {
         assertEquals(0.0, MicStreamer.rms(ByteArray(0)), 0.0)
     }
 
-    @Test fun levelSteps() {
-        assertEquals(0, HudView.levelSteps(10.0))
-        assertEquals(2, HudView.levelSteps(500.0))
-        assertEquals(5, HudView.levelSteps(9000.0))
-    }
 
     @Test fun sourceOrder() {
         // 8-channel MIC (Rokid layout) first, then plain MIC; VOICE_RECOGNITION gave only zeros.
