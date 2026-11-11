@@ -76,6 +76,7 @@ def test_parse_keeps_only_complete_paragraphs():
 def test_prompt_asks_for_korean_and_english_for_korean_text():
     p = prompt("ko")
     assert "into natural Korean" in p and "into English instead" in p
+    assert "Never split a sentence across paragraphs" in p
 
 
 def test_gemini_call_uses_only_the_standard_library(monkeypatch):

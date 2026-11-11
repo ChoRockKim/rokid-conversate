@@ -60,8 +60,12 @@ def prompt(target: str) -> str:
     to = LANG_NAMES.get(target, target)
     return (
         "This photo was taken by smart glasses looking at text (a sign, a menu, a page, a screen). "
-        "Read all legible text in it. Group it into short paragraphs in natural reading order "
-        "(a heading, a menu item with its price, a sentence or a few lines that belong together). "
+        "Read all legible text in it. Group it into paragraphs in natural reading order "
+        "(a heading, a menu item with its price, or one or more complete sentences). "
+        "Never split a sentence across paragraphs: text that wraps onto the next line, or continues "
+        "in the next column, belongs to the same sentence, so join it (without the line breaks) "
+        "into one paragraph. Every paragraph must start at the start of a sentence or item and end "
+        "at its end. "
         f"Translate each paragraph into natural {to}; if a paragraph is already in {to}, translate "
         f"it into {'English' if target != 'en' else 'Korean'} instead. Keep numbers, prices and "
         "names. Give `from` as the ISO 639-1 code of the original language. Skip text you cannot "
