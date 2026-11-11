@@ -69,16 +69,27 @@ _FROM_ENV = object()
 # What speech recognition makes up from noise (YouTube outros, broadcast credits, filler):
 # shown, it kept the captions up while nobody talked.
 _NOISE_TEXT = re.compile(
-    r"^\W*(?:시청해\s*주셔서\s*감사합니다|구독과\s*좋아요|좋아요와\s*구독|구독\s*부탁|MBC\s*뉴스|KBS\s*뉴스|SBS\s*뉴스"
-    r"|다음\s*영상에서\s*만나요|자막\s*제공|thanks? for watching|thank you for watching|you|bye|음+|어+|아+|으+|흠+|"
-    r"ご視聴ありがとうございました|字幕|请不吝点赞)[\W\s]*$",
+    r"^\W*(?:thanks? for watching|thank you for watching|you|bye|음+|어+|아+|으+|흠+|字幕|请不吝点赞)[\W\s]*$",
+    re.IGNORECASE,
+)
+# Phrases Whisper writes from noise, in longer variants too ("구독과 좋아요는 저에게 큰 힘이
+# 됩니다." from the loud noise of a broken Opus stream, 2026-11-11): a short line containing
+# one is dropped whole.
+_NOISE_PHRASES = re.compile(
+    r"구독(?:과|이랑|하고)?\s*좋아요|좋아요(?:와|랑)?\s*구독|구독\s*부탁|알림\s*설정|시청해\s*주셔서\s*감사|"
+    r"다음\s*영상에서|(?:MBC|KBS|SBS|YTN)\s*뉴스|자막\s*(?:제공|by)|ご視聴ありがとう|チャンネル登録|"
+    r"please subscribe|like and subscribe",
     re.IGNORECASE,
 )
 
 
 def is_noise_text(text: str) -> bool:
     t = (text or "").strip()
-    return bool(t) and (bool(_NOISE_TEXT.match(t)) or not re.search(r"\w", t))
+    if not t:
+        return False
+    if _NOISE_TEXT.match(t) or not re.search(r"\w", t):
+        return True
+    return len(t) <= 60 and bool(_NOISE_PHRASES.search(t))
 
 
 def create_app(

@@ -509,3 +509,13 @@ def test_opus_audio_is_decoded_like_pcm():
         caption = read_until(ws, lambda m: m["type"] == "caption" and m["final"])
         assert caption["text"].startswith("완성")
     assert sum(len(m) for m in messages) < len(tone_pcm) * 2 / 4  # well under PCM size
+
+
+def test_hallucinated_outro_lines_are_dropped_but_real_talk_is_kept():
+    from conversate.main import is_noise_text
+
+    for made_up in ["구독과 좋아요는 저에게 큰 힘이 됩니다.", "시청해 주셔서 감사합니다.", "MBC 뉴스 김철수입니다.",
+                    "좋아요와 구독 부탁드려요", "ご視聴ありがとうございました", "Thank you for watching!", "음..."]:
+        assert is_noise_text(made_up), made_up
+    for real in ["감사합니다", "오늘 구독료 얘기 좀 하자", "유튜브 구독자가 많네", "이 영상 좋아요 많이 받았네"]:
+        assert not is_noise_text(real), real
