@@ -68,6 +68,14 @@ class Settings(context: Context) {
         get() = prefs.getBoolean(KEY_KOREAN_CAPTIONS, true)
         set(value) { prefs.edit().putBoolean(KEY_KOREAN_CAPTIONS, value).apply() }
 
+    /**
+     * Save mode (cost): sentence translation only (no live translation), and with Korean
+     * captions off, Korean is transcribed by the free Whisper on the server.
+     */
+    var saveMode: Boolean
+        get() = prefs.getBoolean(KEY_SAVE_MODE, false)
+        set(value) { prefs.edit().putBoolean(KEY_SAVE_MODE, value).apply() }
+
     /** Applies a config passed with `--es config "CONVERSATE:..."`. Returns true if it changed. */
     fun applyIntent(intent: Intent?): Boolean {
         val parsed = intent?.getStringExtra("config")?.let(ServerConfig::parse) ?: return false
@@ -81,5 +89,6 @@ class Settings(context: Context) {
         const val KEY_TOKEN = "token"
         const val KEY_MODE = "mode"
         const val KEY_KOREAN_CAPTIONS = "korean_captions"
+        const val KEY_SAVE_MODE = "save_mode"
     }
 }

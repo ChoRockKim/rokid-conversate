@@ -104,8 +104,11 @@ class HudViewSnapshotTest {
     @Test fun settingsPage() = paparazzi.snapshot(
         hud(HudView.State(connection = "연결됨", connected = true, battery = 82,
             menu = HudView.Menu(
-                listOf(HudView.MenuItem("한국어 자막 끔", "외국어 번역만 표시, AI는 계속 들음")),
-                selected = 0, title = "설정", hint = "탭: 바꾸기 · 두 번 탭: 메뉴로",
+                listOf(
+                    HudView.MenuItem("한국어 자막 끔", "외국어 번역만 표시, AI는 계속 들음"),
+                    HudView.MenuItem("절약 모드 켬", "문장 번역만, 자막 끔이면 무료 받아쓰기"),
+                ),
+                selected = 1, title = "설정", hint = "쓸기: 고르기 · 탭: 바꾸기 · 두 번 탭: 메뉴로",
             ))),
         "16_settings",
     )

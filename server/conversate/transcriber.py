@@ -183,6 +183,13 @@ class HybridTranscriber:
         self.local = local
         self.final = final
 
+    def transcribe_local(self, audio: np.ndarray, language: str | None) -> str:
+        """A final from the free local Whisper (save mode), in [language]."""
+        run = getattr(self.local, "_run", None)
+        if run is None:
+            return self.local.transcribe(audio, partial=False)
+        return run(audio, partial=False, language=language)
+
     def detect_language(self, audio: np.ndarray) -> str:
         detect = getattr(self.local, "detect_language", None)
         return detect(audio) if detect else "ko"

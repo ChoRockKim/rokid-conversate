@@ -11,18 +11,21 @@ object Protocol {
     const val SAMPLE_RATE = 16_000
 
     /** [mode]: the listening mode ([Mode.id]); the server cuts sound and runs the AI by it. */
-    fun hello(mode: String? = null, format: String = "pcm_s16le", koreanCaptions: Boolean = true): String = JSONObject()
+    fun hello(
+        mode: String? = null, format: String = "pcm_s16le", koreanCaptions: Boolean = true, saveMode: Boolean = false,
+    ): String = JSONObject()
         .put("type", "hello")
         .put("sample_rate", SAMPLE_RATE)
         .put("format", format)
         .put("channels", 1)
         .put("korean_captions", koreanCaptions)
+        .put("save_mode", saveMode)
         .apply { if (mode != null) put("mode", mode) }
         .toString()
 
     /** Settings changed on the menu (also sent in every hello). */
-    fun settings(koreanCaptions: Boolean): String =
-        JSONObject().put("type", "settings").put("korean_captions", koreanCaptions).toString()
+    fun settings(koreanCaptions: Boolean, saveMode: Boolean = false): String = JSONObject()
+        .put("type", "settings").put("korean_captions", koreanCaptions).put("save_mode", saveMode).toString()
 
     /** Battery level and drain since the mode started (%/h, null until measurable): server log. */
     fun battery(level: Int, charging: Boolean, perHour: Double?): String = JSONObject()

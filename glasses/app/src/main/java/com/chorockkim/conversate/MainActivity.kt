@@ -73,6 +73,7 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     private var menuIndex = 0
     /** Which menu page shows while [mode] is null: the main menu or settings. */
     private var inSettings = false
+    private var settingsIndex = 0
     private lateinit var wifiEnabler: WifiEnabler
     private var wifiStatus: WifiEnabler.Status? = null
     private var wifiDetail: String? = null
@@ -174,6 +175,7 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         // Opus is off: on the glasses (0.1.26-0.1.27) the server decoded it into loud noise and
         // no captions came. PCM until the encoder output is understood (OPUS_ENABLED).
         client.koreanCaptions = settings.koreanCaptions
+        client.saveMode = settings.saveMode
         encoder = if (OPUS_ENABLED) OpusEncoder.create() else null
         client.format = if (encoder != null) "opus" else "pcm_s16le"
         main.postDelayed(idleCheck, IDLE_CHECK_MS)
@@ -348,13 +350,15 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
             return wifiEnabler.openSystemSettings()
         }
         if (mode == null && inSettings) {
-            // Settings page: one toggle for now; tap switches it, back returns to the menu.
+            // Settings page: swipe picks a toggle, tap switches it, back returns to the menu.
             when (action) {
+                GlassesInput.Action.PREVIOUS, GlassesInput.Action.NEXT -> settingsIndex = 1 - settingsIndex
                 GlassesInput.Action.SELECT -> {
-                    val on = !settings.koreanCaptions
-                    settings.koreanCaptions = on
-                    client.koreanCaptions = on
-                    client.sendText(Protocol.settings(on))
+                    if (settingsIndex == 0) settings.koreanCaptions = !settings.koreanCaptions
+                    else settings.saveMode = !settings.saveMode
+                    client.koreanCaptions = settings.koreanCaptions
+                    client.saveMode = settings.saveMode
+                    client.sendText(Protocol.settings(settings.koreanCaptions, settings.saveMode))
                 }
                 GlassesInput.Action.BACK -> { inSettings = false; menuIndex = Mode.entries.size }
                 else -> return
@@ -553,10 +557,13 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
             wifi = wifiCard(wifiStatus),
             menu = when {
                 mode != null -> null
-                inSettings -> settingsMenu(settings.koreanCaptions)
+                inSettings -> settingsMenu(settings.koreanCaptions, settings.saveMode, settingsIndex)
                 else -> mainMenu(menuIndex)
             },
-            mode = mode?.let { if (settings.koreanCaptions) it.title else "${it.title} · 번역만" },
+            mode = mode?.let {
+                listOfNotNull(it.title, "번역만".takeUnless { settings.koreanCaptions }, "절약".takeIf { settings.saveMode })
+                    .joinToString(" · ")
+            },
             tallAssist = mode != null && !settings.koreanCaptions,
             drain = when {
                 mode == null || charging || battery == null -> null
@@ -592,16 +599,20 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
             selected,
         )
 
-        fun settingsMenu(koreanCaptions: Boolean) = HudView.Menu(
+        fun settingsMenu(koreanCaptions: Boolean, saveMode: Boolean, selected: Int) = HudView.Menu(
             listOf(
                 HudView.MenuItem(
                     "한국어 자막 ${if (koreanCaptions) "켬" else "끔"}",
                     if (koreanCaptions) "모든 말을 자막으로" else "외국어 번역만 표시, AI는 계속 들음",
                 ),
+                HudView.MenuItem(
+                    "절약 모드 ${if (saveMode) "켬" else "끔"}",
+                    if (saveMode) "문장 번역만, 자막 끔이면 무료 받아쓰기" else "실시간 번역, 정확한 받아쓰기",
+                ),
             ),
-            selected = 0,
+            selected = selected,
             title = "설정",
-            hint = "탭: 바꾸기 · 두 번 탭: 메뉴로",
+            hint = "쓸기: 고르기 · 탭: 바꾸기 · 두 번 탭: 메뉴로",
         )
         const val REQ_MIC = 1
         const val CAPTION_HIDE_MS = 10_000L

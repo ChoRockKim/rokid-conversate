@@ -208,6 +208,9 @@ class Session:
         # the glasses; only foreign speech and its translation are (battery: the screen stays
         # empty and dark).
         self.korean_captions = True
+        # Save mode (glasses settings): no live translation (sentence translation only), and
+        # with Korean captions off, Korean finals from the free local Whisper.
+        self.save_mode = False
         self.sent_partials: set[int] = set()
         self.opus: OpusDecoder | None = None
         self.assist = (
@@ -378,12 +381,18 @@ class Session:
             log.info("audio format: %s", audio_format)
             self.want_levels = bool(msg.get("levels"))
             self.korean_captions = msg.get("korean_captions", True) is not False
+            self.save_mode = msg.get("save_mode") is True
             if self.assist is not None:
                 self.assist.long_answers = not self.korean_captions
             self._apply_mode(msg.get("mode"))
             await self.send({"type": "ready"})
         elif kind == "settings":
             # From the glasses' settings menu (also sent again in every hello).
+            if "save_mode" in msg:
+                self.save_mode = msg["save_mode"] is True
+                log.info("save mode: %s", "on" if self.save_mode else "off")
+                if self.save_mode:
+                    await self._stop_live()
             if "korean_captions" in msg:
                 self.korean_captions = msg["korean_captions"] is not False
                 if self.assist is not None:
@@ -493,6 +502,12 @@ class Session:
                 text = await asyncio.to_thread(self.stt.partial_in, event.audio, language)
             elif partial and not self.korean_captions:
                 return None  # no language detection: cannot tell foreign partials apart
+            elif not partial and self.save_mode and not self.korean_captions \
+                    and self.partial_language.get(event.segment_id, "ko") == "ko" \
+                    and hasattr(self.stt, "transcribe_local"):
+                # Save mode, Korean captions off: Korean is read only by the AI, which copes
+                # with a few typos, so the free local Whisper replaces gpt-transcribe here.
+                text = await asyncio.to_thread(self.stt.transcribe_local, event.audio, "ko")
             else:
                 text = await asyncio.to_thread(self.stt.transcribe, event.audio, partial=partial)
         except Exception as exc:  # keep the session alive if one call fails
@@ -647,8 +662,8 @@ class Session:
 
     async def _start_live(self, replay_s: float = 0.0) -> None:
         self.live_until = time.monotonic() + LIVE_IDLE_S
-        if self.live is not None or self.live_factory is None or self.live_starting:
-            return
+        if self.live is not None or self.live_factory is None or self.live_starting or self.save_mode:
+            return  # save mode: sentence translation only (live translation is billed per minute)
         self.live_starting = True
         try:
             await self._open_live(replay_s)

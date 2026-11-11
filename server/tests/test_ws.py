@@ -604,3 +604,50 @@ def test_live_translation_opened_on_a_korean_partial_closes_at_its_final():
         assert s.live is not None
 
     asyncio.run(main())
+
+
+def test_save_mode_uses_local_whisper_for_korean_and_no_live_translation():
+    import asyncio
+    import numpy as np
+    from conversate.main import Session
+    from conversate.segmenter import Event
+
+    class Stt:
+        def __init__(self):
+            self.calls = []
+
+        def transcribe(self, audio, *, partial):
+            self.calls.append("openai")
+            return "오늘 회의는 몇 시야"
+
+        def transcribe_local(self, audio, language):
+            self.calls.append("local")
+            return "오늘 회의는 몇 시야"
+
+    opened = []
+
+    class Live:
+        def __init__(self, on_korean):
+            opened.append(True)
+
+        async def start(self):
+            pass
+
+    async def main():
+        stt = Stt()
+        s = Session(_Ws(), stt)
+        s.live_factory = Live
+        s.save_mode, s.korean_captions = True, False
+        event = Event("final", np.zeros(16000, dtype=np.float32), 3)
+        await s._run_stt(event)
+        assert stt.calls == ["local"]
+        s.partial_language[4] = "en"  # foreign: still the accurate one (its translation shows)
+        await s._run_stt(Event("final", np.zeros(16000, dtype=np.float32), 4))
+        assert stt.calls == ["local", "openai"]
+        s.korean_captions = True  # captions on: Korean is read on screen, accurate one
+        await s._run_stt(Event("final", np.zeros(16000, dtype=np.float32), 5))
+        assert stt.calls[-1] == "openai"
+        await s._start_live(replay_s=1.0)
+        assert opened == [] and s.live is None
+
+    asyncio.run(main())
