@@ -45,4 +45,14 @@ class ProtocolTest {
         assertTrue(Protocol.parse("not json") is ServerMessage.Unknown)
         assertTrue(Protocol.parse("""{"type":"caption"}""") is ServerMessage.Unknown)
     }
+
+    @Test fun helloCarriesModeAndFormatAndBatteryReport() {
+        val hello = org.json.JSONObject(Protocol.hello("lecture", "opus"))
+        assertEquals("lecture", hello.getString("mode"))
+        assertEquals("opus", hello.getString("format"))
+        val battery = org.json.JSONObject(Protocol.battery(82, false, 6.04))
+        assertEquals(82, battery.getInt("level"))
+        assertEquals(6.0, battery.getDouble("per_hour"), 0.001)
+        assertEquals(false, org.json.JSONObject(Protocol.battery(80, true, null)).has("per_hour"))
+    }
 }

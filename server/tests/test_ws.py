@@ -480,3 +480,32 @@ def test_hello_carries_the_mode():
         assert json.loads(ws.receive_text())["type"] == "ready"
         ws.send_text(json.dumps({"type": "mode", "mode": "lecture"}))
         ws.send_text(json.dumps({"type": "stop"}))  # no reply to mode: no error either
+
+
+def test_opus_audio_is_decoded_like_pcm():
+    """The glasses send Opus (battery); the server decodes it into the usual PCM."""
+    import av
+    import numpy as np
+    from conversate.opus import frame_packets
+
+    tone_pcm = np.frombuffer(silence(500) + tone(1200) + silence(1200), dtype="<i2")
+    enc = av.CodecContext.create("libopus", "w")
+    enc.sample_rate, enc.layout, enc.format, enc.bit_rate = 16000, "mono", "s16", 32000
+    enc.open()
+    messages = []
+    for i in range(0, len(tone_pcm) - 1600, 1600):  # 100 ms per message, 5 packets each
+        packets = []
+        for j in range(i, i + 1600, 320):
+            frame = av.AudioFrame.from_ndarray(tone_pcm[j:j + 320].reshape(1, -1), format="s16", layout="mono")
+            frame.sample_rate, frame.pts = 16000, j
+            packets += [bytes(p) for p in enc.encode(frame)]
+        messages.append(frame_packets(packets))
+    stt = FakeTranscriber()
+    with client(stt).websocket_connect("/ws", headers=AUTH) as ws:
+        ws.send_text(json.dumps({"type": "hello", "format": "opus", "levels": True}))
+        assert json.loads(ws.receive_text())["type"] == "ready"
+        for m in messages:
+            ws.send_bytes(m)
+        caption = read_until(ws, lambda m: m["type"] == "caption" and m["final"])
+        assert caption["text"].startswith("완성")
+    assert sum(len(m) for m in messages) < len(tone_pcm) * 2 / 4  # well under PCM size

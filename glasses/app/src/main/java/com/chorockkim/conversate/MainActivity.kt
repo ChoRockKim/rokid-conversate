@@ -8,6 +8,7 @@ import android.graphics.Color
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.Gravity
 import android.view.KeyEvent
@@ -45,6 +46,29 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     private var notice = ""
     // Read on the mic thread; replaced when the mode changes.
     @Volatile private var gate = SpeechGate()
+    /** Opus encoder (battery: an eighth of the bytes); null = PCM. Used on the mic thread. */
+    @Volatile private var encoder: OpusEncoder? = null
+    /** Audio waiting for the connection (reconnecting, or waking from the idle pause). */
+    private val pending = ArrayDeque<ByteArray>()
+    @Volatile private var lastSoundAt = 0L
+    /** Battery: no sound for [IDLE_PAUSE_MS] -> the connection is closed until sound comes. */
+    @Volatile private var idlePaused = false
+    private val idleCheck = object : Runnable {
+        override fun run() {
+            val quiet = SystemClock.elapsedRealtime() - lastSoundAt
+            if (mode != null && !idlePaused && client.state == State.READY && quiet > IDLE_PAUSE_MS) {
+                Log.i(TAG, "idle pause: no sound for ${quiet / 1000} s, closing the connection")
+                idlePaused = true
+                client.disconnect()
+            }
+            main.postDelayed(this, IDLE_CHECK_MS)
+        }
+    }
+    /** Battery drain since the mode started: (level, time) at the start, and %/h. */
+    private var drainStart: Pair<Int, Long>? = null
+    private var drainPerHour: Double? = null
+    /** The window is dimmed while nothing is shown. */
+    private var dimmed = false
     /** null = the main menu is showing (nothing is recorded). */
     private var mode: Mode? = null
     private var menuIndex = 0
@@ -60,10 +84,13 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         override fun onReceive(context: android.content.Context, intent: Intent) {
             val level = intent.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1)
             val scale = intent.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, 100)
+            val previous = battery
             battery = if (level >= 0 && scale > 0) level * 100 / scale else null
             val status = intent.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1)
             charging = status == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
                 status == android.os.BatteryManager.BATTERY_STATUS_FULL
+            measureDrain()
+            if (battery != previous) battery?.let { client.sendText(Protocol.battery(it, charging, drainPerHour)) }
             render()
         }
     }
@@ -109,7 +136,12 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         mic = MicStreamer(
             onChunk = { pcm, rms ->
                 // Battery: silence stays on the glasses (SpeechGate), so Wi-Fi can rest.
-                for (out in gate.feed(pcm, rms)) client.sendAudio(out)
+                val outs = gate.feed(pcm, rms)
+                if (outs.isNotEmpty()) {
+                    lastSoundAt = SystemClock.elapsedRealtime()
+                    if (idlePaused) main.post { resumeFromIdle() }
+                }
+                for (out in outs) encodeOrNull(out)?.let(::sendOrQueue)
                 // Redraw only when the level bars change, not 10 times a second.
                 val steps = HudView.levelSteps(rms)
                 if (steps != micSteps) {
@@ -139,12 +171,77 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         updater.listener = this
         notice = setupNotice()
         menuIndex = settings.lastMode.ordinal
+        encoder = OpusEncoder.create()
+        client.format = if (encoder != null) "opus" else "pcm_s16le"
+        main.postDelayed(idleCheck, IDLE_CHECK_MS)
         render()
+    }
+
+    /** Encodes for sending (Opus when available). On an encoder failure: PCM from now on. */
+    private fun encodeOrNull(pcm: ByteArray): ByteArray? {
+        val enc = encoder ?: return pcm
+        return try {
+            enc.encode(pcm).takeIf { it.isNotEmpty() }
+        } catch (e: Exception) {
+            Log.w(TAG, "opus encoding failed, back to PCM", e)
+            encoder = null
+            enc.release()
+            main.post {
+                client.format = "pcm_s16le"
+                synchronized(pending) { pending.clear() }
+                if (!idlePaused) connectIfConfigured()  // hello again, with the new format
+            }
+            null
+        }
+    }
+
+    /** Sends at once when connected, else keeps it (a few seconds) for when the server is back. */
+    private fun sendOrQueue(payload: ByteArray) {
+        synchronized(pending) {
+            if (pending.isEmpty() && client.sendAudio(payload)) return
+            pending.addLast(payload)
+            while (pending.size > MAX_PENDING) pending.removeFirst()
+        }
+    }
+
+    private fun flushPending() {
+        synchronized(pending) {
+            while (pending.isNotEmpty() && client.sendAudio(pending.first())) pending.removeFirst()
+        }
+    }
+
+    /** Sound again after the idle pause: reconnect (what was heard meanwhile is queued). */
+    private fun resumeFromIdle() {
+        if (!idlePaused) return
+        Log.i(TAG, "idle pause over: sound")
+        idlePaused = false
+        connectIfConfigured()
+    }
+
+    private fun measureDrain() {
+        val level = battery ?: return
+        val now = SystemClock.elapsedRealtime()
+        val start = drainStart
+        if (charging || mode == null) {
+            drainStart = null
+            drainPerHour = null
+            return
+        }
+        if (start == null || level > start.first) {
+            drainStart = level to now
+            drainPerHour = null
+            return
+        }
+        val hours = (now - start.second) / 3_600_000.0
+        drainPerHour = if (hours >= 1 / 6.0 && start.first > level) (start.first - level) / hours else null
     }
 
     /** Starts listening in [picked] (from the menu). */
     private fun startMode(picked: Mode) {
         mode = picked
+        lastSoundAt = SystemClock.elapsedRealtime()
+        drainStart = null
+        measureDrain()
         settings.lastMode = picked
         gate = picked.gate()
         mic.input = picked.input
@@ -173,6 +270,8 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
 
     override fun onResume() {
         super.onResume()
+        idlePaused = false
+        lastSoundAt = SystemClock.elapsedRealtime()
         showCaptions()
         // Sticky broadcast: delivers the current level at once, then every change.
         registerReceiver(batteryReceiver, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
@@ -191,6 +290,8 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
 
     override fun onDestroy() {
         super.onDestroy()
+        main.removeCallbacks(idleCheck)
+        encoder?.release()
         wifiEnabler.stop()
         client.shutdown()
     }
@@ -327,7 +428,7 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     override fun onState(state: State, detail: String) {
         Log.i(TAG, "connection $state $detail")
         connection = when (state) {
-            State.IDLE -> detail.ifEmpty { "연결 안 됨" }
+            State.IDLE -> if (idlePaused) "절전 대기 · 말소리가 나면 다시 연결" else detail.ifEmpty { "연결 안 됨" }
             State.CONNECTING -> "연결 중…"
             State.CONNECTED -> "연결됨, 준비 중…"
             State.READY -> "연결됨"
@@ -337,6 +438,7 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         // A new connection is a new server session: an AI request from the old one is gone.
         if (state == State.READY || state == State.WAITING_RETRY) assistBusy = false
         connectionAlert = (state == State.IDLE || state == State.WAITING_RETRY) && detail.isNotEmpty()
+        if (state == State.READY) flushPending()
         render()
         // Check for a new version once per app launch, on the first connection to the server.
         if (state == State.READY && !updateChecked) {
@@ -411,10 +513,21 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
                 Mode.entries.map { HudView.MenuItem(it.title, it.description) }, menuIndex,
             ) else null,
             mode = mode?.title,
+            drain = drainPerHour?.let { "−%.0f%%/h".format(it) },
             battery = battery,
             charging = charging,
             update = updater.available?.versionName,
         )
+        // Battery: nothing on screen while listening -> darkest the window allows. Whether
+        // the Rokid display honours window brightness is not checked yet.
+        val idle = mode != null && captionsHidden && (assist == null || assistHidden) && !assistBusy &&
+            wifiStatus.let { it == null || it == WifiEnabler.Status.CONNECTED } && message == null && notice.isEmpty()
+        if (idle != dimmed) {
+            dimmed = idle
+            window.attributes = window.attributes.apply {
+                screenBrightness = if (idle) DIM_BRIGHTNESS else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            }
+        }
     }
 
     private companion object {
@@ -422,5 +535,11 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         const val REQ_MIC = 1
         const val CAPTION_HIDE_MS = 10_000L
         const val ASSIST_HIDE_MS = 10_000L
+        /** No sound this long (gate closed) -> close the connection until sound comes back. */
+        const val IDLE_PAUSE_MS = 3 * 60_000L
+        const val IDLE_CHECK_MS = 30_000L
+        /** About 6 s of audio kept while (re)connecting. */
+        const val MAX_PENDING = 60
+        const val DIM_BRIGHTNESS = 0.01f
     }
 }

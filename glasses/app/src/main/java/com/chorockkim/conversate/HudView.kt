@@ -72,6 +72,8 @@ class HudView(context: Context) : View(context) {
         val menu: Menu? = null,
         /** Current listening mode's name, top right before "듣는 중". */
         val mode: String? = null,
+        /** Battery drain since the mode started ("−6%/h"), left of the battery. */
+        val drain: String? = null,
     )
 
     data class MenuItem(val title: String, val description: String)
@@ -269,6 +271,11 @@ class HudView(context: Context) : View(context) {
 
         // Bottom line: hint (left), time (right).
         var right = drawBattery(canvas, W - MARGIN, s.battery, s.charging)
+        s.drain?.let { d ->
+            right -= 6f + tiny.measureText(d)
+            canvas.drawText(d, right, BOTTOM_BASELINE, tiny)
+            right -= 10f
+        }
         val time = clockText(clock())
         right -= tiny.measureText(time)
         canvas.drawText(time, right, BOTTOM_BASELINE, tiny)

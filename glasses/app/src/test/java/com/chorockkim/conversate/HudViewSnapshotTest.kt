@@ -100,7 +100,7 @@ class HudViewSnapshotTest {
 
     @Test fun listeningInLectureMode() = paparazzi.snapshot(
         hud(HudView.State(connection = "연결됨", connected = true, listening = true, level = 900.0,
-            lines = MEETING, battery = 82, mode = Mode.LECTURE.title)),
+            lines = MEETING, battery = 82, mode = Mode.LECTURE.title, drain = "−6%/h")),
         "15_lecture_mode",
     )
 

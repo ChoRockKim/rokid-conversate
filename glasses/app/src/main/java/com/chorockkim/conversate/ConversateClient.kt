@@ -31,6 +31,9 @@ class ConversateClient(
     /** Listening mode sent with every hello (so a reconnect keeps it). */
     @Volatile var mode: String? = null
 
+    /** Audio format announced in hello: "opus" when the glasses can encode it, else PCM. */
+    @Volatile var format: String = "pcm_s16le"
+
     interface Listener {
         fun onState(state: State, detail: String)
         fun onMessage(message: Protocol.ServerMessage)
@@ -118,7 +121,7 @@ class ConversateClient(
             if (!current()) return webSocket.cancel()
             synchronized(lock) { attempt = 0 }
             setState(State.CONNECTED, "")
-            webSocket.send(Protocol.hello(mode))
+            webSocket.send(Protocol.hello(mode, format))
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {

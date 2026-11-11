@@ -11,12 +11,18 @@ object Protocol {
     const val SAMPLE_RATE = 16_000
 
     /** [mode]: the listening mode ([Mode.id]); the server cuts sound and runs the AI by it. */
-    fun hello(mode: String? = null): String = JSONObject()
+    fun hello(mode: String? = null, format: String = "pcm_s16le"): String = JSONObject()
         .put("type", "hello")
         .put("sample_rate", SAMPLE_RATE)
-        .put("format", "pcm_s16le")
+        .put("format", format)
         .put("channels", 1)
         .apply { if (mode != null) put("mode", mode) }
+        .toString()
+
+    /** Battery level and drain since the mode started (%/h, null until measurable): server log. */
+    fun battery(level: Int, charging: Boolean, perHour: Double?): String = JSONObject()
+        .put("type", "battery").put("level", level).put("charging", charging)
+        .apply { if (perHour != null) put("per_hour", Math.round(perHour * 10) / 10.0) }
         .toString()
 
     /** The wearer picked another listening mode on the menu. */

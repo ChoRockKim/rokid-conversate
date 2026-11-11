@@ -43,6 +43,7 @@ from .translate import Translator, needs_translation, translator_from_env
 from .live_translate import LiveTranslator
 from .images import ImageFinder
 from .modes import Mode, mode_for
+from .opus import OpusDecoder
 
 log = logging.getLogger("conversate")
 
@@ -184,6 +185,7 @@ class Session:
         self.partial_language: dict[int, str | None] = {}
         self.live_starting = False
         self.want_levels = False
+        self.opus: OpusDecoder | None = None
         self.assist = (
             AssistEngine(ai, self._send_assist, on_busy=self._send_assist_busy, converter=converter)
             if ai is not None else None
@@ -255,6 +257,8 @@ class Session:
                 raise WebSocketDisconnect(message.get("code", 1000))
             if message.get("bytes") is not None:
                 pcm = message["bytes"]
+                if self.opus is not None:
+                    pcm = await asyncio.to_thread(self.opus.decode, pcm)
                 self.received_samples += len(pcm) // 2
                 self._track_audio(pcm)
                 self._remember(pcm)
@@ -337,19 +341,26 @@ class Session:
             return
         kind = msg.get("type")
         if kind == "hello":
-            if msg.get("sample_rate", SAMPLE_RATE) != SAMPLE_RATE or msg.get(
-                "format", "pcm_s16le"
-            ) != "pcm_s16le" or msg.get("channels", 1) != 1:
+            audio_format = msg.get("format", "pcm_s16le")
+            if msg.get("sample_rate", SAMPLE_RATE) != SAMPLE_RATE or audio_format not in (
+                "pcm_s16le", "opus"
+            ) or msg.get("channels", 1) != 1:
                 await self.send(
-                    {"type": "error", "message": "expected 16 kHz mono pcm_s16le audio"}
+                    {"type": "error", "message": "expected 16 kHz mono pcm_s16le or opus audio"}
                 )
                 return
+            # Opus (battery: an eighth of the bytes): decoded here into the usual PCM.
+            self.opus = OpusDecoder() if audio_format == "opus" else None
+            log.info("audio format: %s", audio_format)
             self.want_levels = bool(msg.get("levels"))
             self._apply_mode(msg.get("mode"))
             await self.send({"type": "ready"})
         elif kind == "mode":
             # Picked on the glasses' menu (also sent again in every hello).
             self._apply_mode(msg.get("mode"))
+        elif kind == "battery":
+            # Battery drain the glasses measured (%/h), already logged above with the mode.
+            log.info("battery (mode %s): %s", self.mode.name, text[:200])
         elif kind == "mic":
             pass  # diagnostics from the glasses (audio source); already logged above
         elif kind == "stop":
@@ -585,6 +596,7 @@ class Session:
         finally:
             self.live_starting = False
         self.want_levels = False
+        self.opus: OpusDecoder | None = None
 
     async def _open_live(self, replay_s: float) -> None:
         started = time.monotonic()
