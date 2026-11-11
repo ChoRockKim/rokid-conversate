@@ -483,3 +483,50 @@ def test_triage_decides_web_search():
         assert calls == [False]
 
     asyncio.run(main())
+
+
+def test_triage_sees_the_last_lines_and_no_reasoning():
+    from conversate.assist import OpenAIAssistant
+
+    eng = AssistEngine(object(), lambda a: None, AssistConfig(triage_lines=3))
+    view = eng._triage_view(["(상황: 수업)", "a", "b", "c", "d", "[새] e"])
+    assert view == ["(상황: 수업)", "c", "d", "[새] e"]
+    many_new = ["a"] + [f"[새] {i}" for i in range(5)]
+    assert eng._triage_view(many_new) == many_new[1:]  # new lines are never cut
+
+    class Raw:
+        headers = {}
+
+        def parse(self):
+            class R:
+                output_text = '{"skip": true}'
+                usage = None
+            return R()
+
+    class Responses:
+        def __init__(self, refuse_none):
+            self.calls, self.refuse_none = [], refuse_none
+            self.with_raw_response = self
+
+        def create(self, **kwargs):
+            from openai import BadRequestError
+            import httpx
+            self.calls.append(kwargs.get("reasoning"))
+            if self.refuse_none and kwargs.get("reasoning") == {"effort": "none"}:
+                req = httpx.Request("POST", "https://x")
+                raise BadRequestError("unsupported reasoning effort", response=httpx.Response(400, request=req), body=None)
+            return Raw()
+
+    for refuse in (False, True):
+        a = OpenAIAssistant.__new__(OpenAIAssistant)
+        a.reasoning_effort, a.triage_reasoning = "low", "none"
+        a._no_reasoning, a._refused_efforts = set(), set()
+        a.client = type("C", (), {})()
+        a.client.responses = Responses(refuse)
+        a._call("triage", "gpt-6-luna", "i", "p", False)
+        a._call("triage", "gpt-6-luna", "i", "p", False)
+        a._call("answer", "gpt-6.1-terra", "i", "p", False)
+        if refuse:
+            assert a.client.responses.calls == [{"effort": "none"}, {"effort": "low"}, {"effort": "low"}, {"effort": "low"}]
+        else:
+            assert a.client.responses.calls == [{"effort": "none"}, {"effort": "none"}, {"effort": "low"}]

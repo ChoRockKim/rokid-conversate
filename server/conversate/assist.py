@@ -165,7 +165,11 @@ class OpenAIAssistant:
         self.client = OpenAI(timeout=30.0, max_retries=0)
         # Speed: little hidden reasoning for these short jobs (ASSIST_REASONING=none|low|medium|"").
         self.reasoning_effort = os.environ.get("ASSIST_REASONING", "low")
+        # Triage only decides whether to show something: no hidden reasoning (it counted as
+        # output tokens on every call, ~140 per triage on 2026-11-08). "low" if refused.
+        self.triage_reasoning = os.environ.get("ASSIST_TRIAGE_REASONING", "none")
         self._no_reasoning: set[str] = set()
+        self._refused_efforts: set[tuple[str, str]] = set()
 
     def _conversation(self, transcript: list[str], shown: list[str]) -> str:
         prompt = ""
@@ -190,18 +194,33 @@ class OpenAIAssistant:
                         "user_location": {"type": "approximate", "country": "KR"}}]
                 if search else [],
             )
-            if self.reasoning_effort and model not in self._no_reasoning:
-                kwargs["reasoning"] = {"effort": self.reasoning_effort}
+            effort = self.triage_reasoning if step == "triage" else self.reasoning_effort
+            if (model, effort) in self._refused_efforts:
+                effort = self.reasoning_effort
+            if effort and model not in self._no_reasoning:
+                kwargs["reasoning"] = {"effort": effort}
             try:
                 raw = self.client.responses.with_raw_response.create(**kwargs)
             except BadRequestError as e:
                 if "reasoning" not in kwargs or "reason" not in str(e).lower():
                     raise
-                # This model takes no reasoning setting: remember and call it plainly.
-                log.info("assist: %s rejects reasoning effort, calling without it", model)
-                self._no_reasoning.add(model)
-                kwargs.pop("reasoning")
-                raw = self.client.responses.with_raw_response.create(**kwargs)
+                raw = None
+                if effort != self.reasoning_effort:
+                    # This effort level is not offered by this model: use the usual one.
+                    log.info("assist: %s rejects reasoning effort %r, using %r", model, effort, self.reasoning_effort)
+                    self._refused_efforts.add((model, effort))
+                    kwargs["reasoning"] = {"effort": self.reasoning_effort}
+                    try:
+                        raw = self.client.responses.with_raw_response.create(**kwargs)
+                    except BadRequestError as e2:
+                        if "reason" not in str(e2).lower():
+                            raise
+                if raw is None:
+                    # This model takes no reasoning setting: remember and call it plainly.
+                    log.info("assist: %s rejects reasoning effort, calling without it", model)
+                    self._no_reasoning.add(model)
+                    kwargs.pop("reasoning")
+                    raw = self.client.responses.with_raw_response.create(**kwargs)
         except RateLimitError as e:
             raise RateLimited(retry_after_seconds(str(e), e.response.headers.get("retry-after"))) from e
         response = raw.parse()
@@ -412,6 +431,9 @@ class AssistConfig:
     question_interval_s: float = 2.0
     # How much of the conversation the model sees.
     context_lines: int = 20
+    # Triage sees only the last this many (cost: it runs every ~15 s of talk; the answer
+    # step still gets context_lines).
+    triage_lines: int = 12
     # Titles remembered to avoid repeating a topic.
     remember_titles: int = 6
     # Volunteered information (not asked for): at most one card per this many seconds.
@@ -516,7 +538,7 @@ class AssistEngine:
         try:
             if triage is not None:
                 # Step 1 shows nothing; "thinking" only once there is something to answer.
-                picked = await asyncio.to_thread(triage, transcript, list(self.shown))
+                picked = await asyncio.to_thread(triage, self._triage_view(transcript), list(self.shown))
                 pick = Pick(topic=picked, kind="question") if isinstance(picked, str) else picked
                 pick = self._vet(pick, new_list)
                 topic = pick.topic if pick is not None else None
@@ -578,6 +600,13 @@ class AssistEngine:
             self.shown.append(conv.title)
             log.info("assist: instant conversion %s", conv.text)
             await self.send(Assist(conv.title, conv.text))
+
+    def _triage_view(self, transcript: list[str]) -> list[str]:
+        """The last [triage_lines] lines (and the situation line, if any); new lines always."""
+        head = [line for line in transcript[:1] if line.startswith("(상황:")]
+        body = transcript[len(head):]
+        keep = max(self.config.triage_lines, sum(1 for line in body if line.startswith("[새]")))
+        return head + body[-keep:]
 
     def _vet(self, pick: "Pick | None", new_lines: list[str]) -> "Pick | None":
         """Checks on what triage picked, before anything shows on screen."""
