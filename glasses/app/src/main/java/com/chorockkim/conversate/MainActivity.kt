@@ -233,7 +233,8 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
             return
         }
         val hours = (now - start.second) / 3_600_000.0
-        drainPerHour = if (hours >= 1 / 6.0 && start.first > level) (start.first - level) / hours else null
+        // A number once it means something: 3 min and at least 1% gone (1% is the resolution).
+        drainPerHour = if (hours >= 3 / 60.0 && start.first > level) (start.first - level) / hours else null
     }
 
     /** Starts listening in [picked] (from the menu). */
@@ -513,7 +514,10 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
                 Mode.entries.map { HudView.MenuItem(it.title, it.description) }, menuIndex,
             ) else null,
             mode = mode?.title,
-            drain = drainPerHour?.let { "−%.0f%%/h".format(it) },
+            drain = when {
+                mode == null || charging || battery == null -> null
+                else -> drainPerHour?.let { "−%.0f%%/h".format(it) } ?: "소모 측정 중"
+            },
             battery = battery,
             charging = charging,
             update = updater.available?.versionName,
