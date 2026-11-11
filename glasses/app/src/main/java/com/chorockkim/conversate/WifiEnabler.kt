@@ -36,6 +36,12 @@ class WifiEnabler(private val context: Context, private val onStatus: (Status, S
     private val connectivity =
         context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     @Volatile private var running = false
+    @Volatile private var watcher: Thread? = null
+    /** Battery: instead of checking every 5 s while connected, the system tells us of changes. */
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: android.net.Network) { watcher?.interrupt() }
+        override fun onLost(network: android.net.Network) { watcher?.interrupt() }
+    }
     /** What the helper last reported, shown on the Wi-Fi card (there is no adb on the glasses). */
     @Volatile var helperReport: String? = null
         private set
@@ -95,13 +101,19 @@ class WifiEnabler(private val context: Context, private val onStatus: (Status, S
                     last = status to detail
                     onStatus(status, detail)
                 }
-                Thread.sleep(if (status == Status.CONNECTED) CONNECTED_POLL_MS else POLL_MS)
+                try {
+                    Thread.sleep(if (status == Status.CONNECTED) CONNECTED_POLL_MS else POLL_MS)
+                } catch (e: InterruptedException) {
+                    // Woken by the network callback: check now.
+                }
             }
-        }, "wifi-watch").apply { isDaemon = true }.start()
+        }, "wifi-watch").apply { isDaemon = true; watcher = this }.start()
+        runCatching { connectivity.registerDefaultNetworkCallback(networkCallback) }
     }
 
     fun stop() {
         running = false
+        runCatching { connectivity.unregisterNetworkCallback(networkCallback) }
         runCatching { context.unregisterReceiver(resultReceiver) }
     }
 
@@ -164,7 +176,8 @@ class WifiEnabler(private val context: Context, private val onStatus: (Status, S
         const val HELPER_ACTION = "$HELPER.WIFI_ON"
         const val HELPER_RESULT = "$HELPER.RESULT"
         const val POLL_MS = 1_000L
-        const val CONNECTED_POLL_MS = 5_000L
+        /** While connected, a slow check; a lost network wakes the loop at once (callback). */
+        const val CONNECTED_POLL_MS = 60_000L
         const val RETRY_MS = 10_000L
         /** Still off after this long: say so (and offer the system screen on tap). */
         const val GIVE_UP_MS = 8_000L

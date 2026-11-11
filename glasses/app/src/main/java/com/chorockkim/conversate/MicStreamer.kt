@@ -128,6 +128,7 @@ class MicStreamer(
             val buffer = ByteArray(chunkBytes)
             val levelSums = DoubleArray(source.channels)
             var levelChunks = 0
+            var levelSamples = 0
             var playbackGain = 1.0
             var reports = 0
             var altChunks = 0
@@ -148,8 +149,12 @@ class MicStreamer(
                 if (filled != chunkBytes) continue
 
                 val mono = if (source.channels == 1) buffer.copyOf() else {
-                    channelRms(buffer, source.channels).forEachIndexed { i, r -> levelSums[i] += r * r }
-                    val primary = mix(buffer, source.channels, source.mixChannels, source.gain)
+                    // Diagnostics only: per-channel levels sampled once a second, not every chunk.
+                    if (levelChunks % LEVEL_SAMPLE_EVERY == 0) {
+                        channelRms(buffer, source.channels).forEachIndexed { i, r -> levelSums[i] += r * r }
+                        levelSamples++
+                    }
+                    // Mix only the channels this input uses (CPU: battery).
                     val picked = when {
                         input == Input.PLAYBACK && source.channels == 8 -> {
                             // Quiet media came in at RMS 13-40 (2026-11-11): automatic gain.
@@ -157,10 +162,15 @@ class MicStreamer(
                             playbackGain = nextGain(playbackGain, rms(raw))
                             mix(buffer, source.channels, PLAYBACK_CHANNELS, playbackGain)
                         }
-                        source.altChannels.isEmpty() -> primary
+                        source.altChannels.isEmpty() -> mix(buffer, source.channels, source.mixChannels, source.gain)
+                        input == Input.FAR_FIELD -> {
+                            useAlt = true
+                            mix(buffer, source.channels, source.altChannels, source.altGain)
+                        }
                         else -> {
+                            val primary = mix(buffer, source.channels, source.mixChannels, source.gain)
                             val alt = mix(buffer, source.channels, source.altChannels, source.altGain)
-                            useAlt = input == Input.FAR_FIELD || pickAlt(rms(primary), rms(alt), useAlt)
+                            useAlt = pickAlt(rms(primary), rms(alt), useAlt)
                             if (useAlt) alt else primary
                         }
                     }
@@ -170,10 +180,11 @@ class MicStreamer(
                     if (++levelChunks >= (if (reports == 0) FIRST_LEVEL_REPORT_CHUNKS else LEVEL_REPORT_CHUNKS)) {
                         reports++
                         onChannelLevels(
-                            source.name, levelSums.map { sqrt(it / levelChunks).roundToInt() },
+                            source.name, levelSums.map { sqrt(it / maxOf(1, levelSamples)).roundToInt() },
                             altChunks * 100 / levelChunks,
                         )
                         levelSums.fill(0.0)
+                        levelSamples = 0
                         levelChunks = 0
                         altChunks = 0
                     }
@@ -223,6 +234,8 @@ class MicStreamer(
         /** Per-channel levels every 60 s (diagnostics; was 5 s, battery). */
         const val LEVEL_REPORT_CHUNKS = 600
         const val FIRST_LEVEL_REPORT_CHUNKS = 50
+        /** Per-channel levels are measured on one chunk in this many (once a second). */
+        const val LEVEL_SAMPLE_EVERY = 10
         /**
          * Echo reference channels of [ROKID_8CH_MASK]: the signal sent to the speakers, used by
          * the glasses' echo cancelling. Media mode captions what plays there (Bluetooth audio)

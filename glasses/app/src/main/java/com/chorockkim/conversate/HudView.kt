@@ -301,7 +301,8 @@ class HudView(context: Context) : View(context) {
         canvas.drawText(hintText, 0, hintText.length, MARGIN, BOTTOM_BASELINE, hintPaint)
 
         canvas.restore()
-        postInvalidateDelayed(15_000) // bottom-right time
+        // Bottom-right time: redraw when the minute changes, not every 15 s (battery).
+        postInvalidateDelayed(60_000 - clock() % 60_000 + 50)
     }
 
     private fun drawMic(canvas: Canvas, s: State) {

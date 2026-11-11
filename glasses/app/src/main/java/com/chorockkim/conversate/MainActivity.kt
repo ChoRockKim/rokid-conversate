@@ -47,6 +47,9 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     @Volatile private var gate = SpeechGate()
     /** Opus encoder (battery: an eighth of the bytes); null = PCM. Used on the mic thread. */
     @Volatile private var encoder: OpusEncoder? = null
+    // Mic thread only: audio waiting to go out in one message (see BATCH_CHUNKS).
+    private val batch = java.io.ByteArrayOutputStream()
+    private var batchChunks = 0
     /** Audio waiting for the connection (reconnecting, or waking from the idle pause). */
     private val pending = ArrayDeque<ByteArray>()
     @Volatile private var lastSoundAt = 0L
@@ -146,7 +149,14 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
                     lastSoundAt = SystemClock.elapsedRealtime()
                     if (idlePaused) main.post { resumeFromIdle() }
                 }
-                for (out in outs) encodeOrNull(out)?.let(::sendOrQueue)
+                // Battery: sent in batches of ~300 ms instead of every 100 ms, so the Wi-Fi radio
+                // gets short rests during speech; the rest goes out as soon as the gate closes.
+                for (out in outs) encodeOrNull(out)?.let { batch.write(it); batchChunks++ }
+                if (batchChunks >= BATCH_CHUNKS || (outs.isEmpty() && batchChunks > 0)) {
+                    sendOrQueue(batch.toByteArray())
+                    batch.reset()
+                    batchChunks = 0
+                }
                 // No level bars any more (battery: they redrew the screen whenever anyone spoke).
             },
             onError = { message -> main.post { notice = message; render() } },
@@ -622,6 +632,8 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         const val IDLE_CHECK_MS = 30_000L
         /** About 6 s of audio kept while (re)connecting. */
         const val MAX_PENDING = 60
+        /** 100 ms chunks sent together (adds up to ~0.2 s to captions). */
+        const val BATCH_CHUNKS = 3
         const val DIM_BRIGHTNESS = 0.01f
         const val MAX_ASSIST_HISTORY = 20
         const val OPUS_ENABLED = false
