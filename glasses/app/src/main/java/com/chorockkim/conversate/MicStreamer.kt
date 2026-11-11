@@ -39,6 +39,8 @@ class MicStreamer(
     private val onChannelLevels: (name: String, levels: List<Int>, rawShare: Int) -> Unit = { _, _, _ -> },
 ) {
     @Volatile private var running = false
+    /** Raw capsules only (distant voices, see [Mode.farField]); otherwise picked per chunk. */
+    @Volatile var farField = false
     private var thread: Thread? = null
 
     val isRunning: Boolean get() = running
@@ -139,7 +141,7 @@ class MicStreamer(
                     val primary = mix(buffer, source.channels, source.mixChannels, source.gain)
                     val picked = if (source.altChannels.isEmpty()) primary else {
                         val alt = mix(buffer, source.channels, source.altChannels, source.altGain)
-                        useAlt = pickAlt(rms(primary), rms(alt), useAlt)
+                        useAlt = farField || pickAlt(rms(primary), rms(alt), useAlt)
                         if (useAlt) alt else primary
                     }
                     if (useAlt) altChunks++

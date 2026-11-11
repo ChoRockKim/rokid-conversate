@@ -49,4 +49,15 @@ class SpeechGateTest {
         assertFalse(gate.open)
         assertTrue("sent $sent", sent < 600)
     }
+
+    @Test fun lectureAndMediaGatesOpenOnQuieterSound() {
+        for (mode in listOf(Mode.LECTURE, Mode.MEDIA)) {
+            val gate = mode.gate()
+            repeat(30) { gate.feed(chunk(it), 20.0) }
+            assertTrue("$mode", gate.feed(chunk(0), 45.0).isNotEmpty())  // 2.25x, one chunk
+        }
+        val daily = Mode.DAILY.gate()
+        repeat(30) { daily.feed(chunk(it), 20.0) }
+        assertTrue(daily.feed(chunk(0), 45.0).isEmpty())
+    }
 }

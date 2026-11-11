@@ -15,6 +15,8 @@ package com.chorockkim.conversate
 class SpeechGate(
     private val preRollChunks: Int = PRE_ROLL_CHUNKS,
     private val hangoverChunks: Int = HANGOVER_CHUNKS,
+    private val openRatio: Double = OPEN_RATIO,
+    private val openChunks: Int = OPEN_CHUNKS,
 ) {
     private val preRoll = ArrayDeque<ByteArray>()
     private var floor = -1.0
@@ -30,12 +32,12 @@ class SpeechGate(
             rms < floor -> floor * 0.8 + rms * 0.2
             else -> floor * 0.995 + rms * 0.005
         }
-        val loud = rms >= maxOf(MIN_RMS, floor * OPEN_RATIO)
+        val loud = rms >= maxOf(MIN_RMS, floor * openRatio)
         loudRun = if (loud) loudRun + 1 else 0
         val wasOpen = open
         // Opening needs a run of loud chunks; once open, any loud chunk keeps it open.
         quiet = when {
-            loud && (wasOpen || loudRun >= OPEN_CHUNKS) -> 0
+            loud && (wasOpen || loudRun >= openChunks) -> 0
             quiet == Int.MAX_VALUE -> quiet
             else -> quiet + 1
         }

@@ -17,12 +17,16 @@ import android.widget.FrameLayout
 import com.chorockkim.conversate.ConversateClient.State
 
 /**
- * Single screen. Listening is always on while the app is in the foreground: mic audio streams
- * to the server and captions come back. Leaving the app (pause) stops it.
+ * Single screen. At launch a main menu picks the listening mode ([Mode]: daily, lecture/film,
+ * media), each taking in sound differently. After that, listening is on while the app is in
+ * the foreground: mic audio streams to the server and captions come back. Leaving the app
+ * (pause) stops it.
  *
  * Input (touchpad, R08 ring with or without R08 Access Bridge):
- *   forward/back = newer/older captions, back (double tap) = back to live captions if scrolled,
- *   otherwise exit. Captions hide after 10 s without a new caption; any tap or slide brings them back.
+ *   menu: forward/back = choose, tap = start, back (double tap) = exit.
+ *   listening: forward/back = newer/older captions, back = back to live captions if scrolled,
+ *   otherwise back to the menu. Captions hide after 10 s without a new caption; any tap or
+ *   slide brings them back.
  */
 class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     private val main = Handler(Looper.getMainLooper())
@@ -39,8 +43,11 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     private var connectionAlert = false
     private var level = 0.0
     private var notice = ""
-    // Mic thread only.
-    private val gate = SpeechGate()
+    // Read on the mic thread; replaced when the mode changes.
+    @Volatile private var gate = SpeechGate()
+    /** null = the main menu is showing (nothing is recorded). */
+    private var mode: Mode? = null
+    private var menuIndex = 0
     private lateinit var wifiEnabler: WifiEnabler
     private var wifiStatus: WifiEnabler.Status? = null
     private var wifiDetail: String? = null
@@ -131,6 +138,28 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         updater = Updater(this, { settings.config }, { main.post(it) })
         updater.listener = this
         notice = setupNotice()
+        menuIndex = settings.lastMode.ordinal
+        render()
+    }
+
+    /** Starts listening in [picked] (from the menu). */
+    private fun startMode(picked: Mode) {
+        mode = picked
+        settings.lastMode = picked
+        gate = picked.gate()
+        mic.farField = picked.farField
+        client.mode = picked.id
+        client.sendText(Protocol.mode(picked.id))
+        captions.backToLive()
+        startListening()
+        showCaptions()
+    }
+
+    /** Back to the main menu: stops recording (the connection stays). */
+    private fun showMenu() {
+        stopListening()
+        mode = null
+        menuIndex = settings.lastMode.ordinal
         render()
     }
 
@@ -148,7 +177,7 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         // Sticky broadcast: delivers the current level at once, then every change.
         registerReceiver(batteryReceiver, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         connectIfConfigured()
-        startListening()
+        if (mode != null) startListening()
         // So R08 Access Bridge treats this view as the current focus from the first ring input.
         hud.requestFocus()
     }
@@ -212,6 +241,18 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         if (action == GlassesInput.Action.SELECT && wifiStatus == WifiEnabler.Status.CANNOT_ENABLE) {
             return wifiEnabler.openSystemSettings()
         }
+        if (mode == null) {
+            // Main menu.
+            val modes = Mode.entries
+            when (action) {
+                GlassesInput.Action.PREVIOUS -> menuIndex = (menuIndex - 1 + modes.size) % modes.size
+                GlassesInput.Action.NEXT -> menuIndex = (menuIndex + 1) % modes.size
+                GlassesInput.Action.SELECT -> return startMode(modes[menuIndex])
+                GlassesInput.Action.BACK -> return finish()
+                else -> return
+            }
+            return render()
+        }
         // While captions are hidden, a tap or a slide only brings them back.
         if ((captionsHidden || assistHidden) && action != GlassesInput.Action.BACK) {
             if (assist != null) showAssist()
@@ -222,7 +263,7 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
             GlassesInput.Action.SELECT -> Unit // listening is always on; a tap just keeps captions up
             GlassesInput.Action.PREVIOUS -> captions.scrollOlder()
             GlassesInput.Action.NEXT -> captions.scrollNewer()
-            GlassesInput.Action.BACK -> if (captions.scrollBack > 0) captions.backToLive() else return finish()
+            GlassesInput.Action.BACK -> if (captions.scrollBack > 0) captions.backToLive() else return showMenu()
             else -> return
         }
         showCaptions()
@@ -272,7 +313,7 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         super.onRequestPermissionsResult(code, permissions, results)
         if (code != REQ_MIC) return
         if (results.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-            startListening()
+            if (mode != null) startListening()
         } else {
             notice = "마이크 권한이 없습니다.\nadb shell pm grant $packageName android.permission.RECORD_AUDIO"
             render()
@@ -366,6 +407,10 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
             assistBusy = assistBusy && connected,
             message = message,
             wifi = wifiCard(wifiStatus),
+            menu = if (mode == null) HudView.Menu(
+                Mode.entries.map { HudView.MenuItem(it.title, it.description) }, menuIndex,
+            ) else null,
+            mode = mode?.title,
             battery = battery,
             charging = charging,
             update = updater.available?.versionName,

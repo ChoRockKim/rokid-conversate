@@ -24,6 +24,7 @@ import re
 import threading
 import time
 from collections import deque
+from dataclasses import replace
 from contextlib import asynccontextmanager
 from typing import Callable
 
@@ -41,6 +42,7 @@ from .transcriber import Transcriber, transcriber_from_env
 from .translate import Translator, needs_translation, translator_from_env
 from .live_translate import LiveTranslator
 from .images import ImageFinder
+from .modes import Mode, mode_for
 
 log = logging.getLogger("conversate")
 
@@ -186,7 +188,9 @@ class Session:
             AssistEngine(ai, self._send_assist, on_busy=self._send_assist_busy, converter=converter)
             if ai is not None else None
         )
-        self.segmenter = Segmenter(segmenter_config)
+        self.base_segmenter_config = segmenter_config or SegmenterConfig()
+        self.segmenter = Segmenter(self.base_segmenter_config)
+        self.mode: Mode = mode_for(None)
         self.finals: deque[Event] = deque()
         self.partial: Event | None = None
         self.last_final_id = 0
@@ -341,7 +345,11 @@ class Session:
                 )
                 return
             self.want_levels = bool(msg.get("levels"))
+            self._apply_mode(msg.get("mode"))
             await self.send({"type": "ready"})
+        elif kind == "mode":
+            # Picked on the glasses' menu (also sent again in every hello).
+            self._apply_mode(msg.get("mode"))
         elif kind == "mic":
             pass  # diagnostics from the glasses (audio source); already logged above
         elif kind == "stop":
@@ -349,6 +357,28 @@ class Session:
                 self._enqueue(event)
         else:
             await self.send({"type": "error", "message": f"unknown message type: {kind}"})
+
+    def _apply_mode(self, name: str | None) -> None:
+        """Listening mode (modes.py): how utterances are cut and what the AI card does."""
+        mode = mode_for(name)
+        if mode.name == self.mode.name:
+            return
+        log.info("mode: %s -> %s", self.mode.name, mode.name)
+        # Finish what was being said under the old settings; ids keep counting up (the glasses
+        # key captions by id).
+        for event in self.segmenter.flush():
+            self._enqueue(event)
+        next_id = self.segmenter._next_id
+        self.segmenter = Segmenter(replace(self.base_segmenter_config, **mode.segmenter))
+        self.segmenter._next_id = next_id
+        self.mode = mode
+        if self.assist is not None:
+            self.assist.situation = mode.situation
+            self.assist.blocked_kinds = mode.blocked_kinds
+            self.assist.config = replace(
+                self.assist.default_config,
+                proactive_interval_s=mode.proactive_interval_s or self.assist.default_config.proactive_interval_s,
+            )
 
     def _enqueue(self, event: Event) -> None:
         if event.kind == "final":
@@ -474,7 +504,7 @@ class Session:
         else:
             await self._send_caption(seg, text, True, None)
             self.live_texts.pop(seg, None)  # Korean speech: the translator's version is not wanted
-        if text and self.assist is not None:
+        if text and self.assist is not None and self.mode.assist:
             self.assist.on_final(text)
 
     async def _send_caption(self, seg: int, text: str, final: bool, translation: str | None) -> None:

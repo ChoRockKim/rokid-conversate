@@ -444,3 +444,39 @@ def test_a_two_sentence_line_keeps_its_second_sentence():
         assert s.live_texts[2] == "어제"
 
     asyncio.run(main())
+
+
+def test_mode_changes_how_sound_is_cut_and_the_ai():
+    import asyncio
+    from conversate.assist import AssistEngine, Pick
+
+    class Ai:
+        def triage(self, transcript, shown):
+            return None
+
+    async def main():
+        s = _session()
+        s.assist = AssistEngine(Ai(), lambda a: None)
+        assert s.mode.name == "daily"
+        s.segmenter._next_id = 7
+        s._apply_mode("lecture")
+        assert s.segmenter.config.end_silence_ms == 900
+        assert s.segmenter._next_id == 7  # caption ids keep counting up
+        assert s.assist.config.proactive_interval_s == 30.0
+        assert s.assist._vet(Pick("t", kind="suggest", text="확인할 점"), []) is None
+        s._apply_mode("media")
+        assert s.segmenter.config.max_segment_ms == 8_000 and s.segmenter.config.vad_mode == 0
+        assert not s.mode.assist
+        s._apply_mode("nonsense")  # unknown: back to daily
+        assert s.mode.name == "daily" and s.segmenter.config.end_silence_ms == 700
+        assert s.assist.config.proactive_interval_s == 25.0
+
+    asyncio.run(main())
+
+
+def test_hello_carries_the_mode():
+    with client().websocket_connect("/ws", headers=AUTH) as ws:
+        ws.send_text(json.dumps({"type": "hello", "mode": "media"}))
+        assert json.loads(ws.receive_text())["type"] == "ready"
+        ws.send_text(json.dumps({"type": "mode", "mode": "lecture"}))
+        ws.send_text(json.dumps({"type": "stop"}))  # no reply to mode: no error either

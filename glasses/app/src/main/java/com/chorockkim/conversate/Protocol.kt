@@ -10,12 +10,17 @@ import org.json.JSONObject
 object Protocol {
     const val SAMPLE_RATE = 16_000
 
-    fun hello(): String = JSONObject()
+    /** [mode]: the listening mode ([Mode.id]); the server cuts sound and runs the AI by it. */
+    fun hello(mode: String? = null): String = JSONObject()
         .put("type", "hello")
         .put("sample_rate", SAMPLE_RATE)
         .put("format", "pcm_s16le")
         .put("channels", 1)
+        .apply { if (mode != null) put("mode", mode) }
         .toString()
+
+    /** The wearer picked another listening mode on the menu. */
+    fun mode(mode: String): String = JSONObject().put("type", "mode").put("mode", mode).toString()
 
     fun stop(): String = JSONObject().put("type", "stop").toString()
 

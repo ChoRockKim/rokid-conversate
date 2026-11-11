@@ -55,6 +55,11 @@ class Settings(context: Context) {
             prefs.edit().putString(KEY_URL, value.url).putString(KEY_TOKEN, value.token).apply()
         }
 
+    /** The listening mode picked last time (the menu starts on it). */
+    var lastMode: Mode
+        get() = Mode.of(prefs.getString(KEY_MODE, null)) ?: Mode.DAILY
+        set(value) { prefs.edit().putString(KEY_MODE, value.id).apply() }
+
     /** Applies a config passed with `--es config "CONVERSATE:..."`. Returns true if it changed. */
     fun applyIntent(intent: Intent?): Boolean {
         val parsed = intent?.getStringExtra("config")?.let(ServerConfig::parse) ?: return false
@@ -66,5 +71,6 @@ class Settings(context: Context) {
     private companion object {
         const val KEY_URL = "url"
         const val KEY_TOKEN = "token"
+        const val KEY_MODE = "mode"
     }
 }

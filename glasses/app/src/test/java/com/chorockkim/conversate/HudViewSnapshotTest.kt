@@ -92,6 +92,18 @@ class HudViewSnapshotTest {
         "13_wifi_waiting",
     )
 
+    @Test fun mainMenu() = paparazzi.snapshot(
+        hud(HudView.State(connection = "연결됨", connected = true, battery = 82,
+            menu = HudView.Menu(Mode.entries.map { HudView.MenuItem(it.title, it.description) }, selected = 1))),
+        "14_main_menu",
+    )
+
+    @Test fun listeningInLectureMode() = paparazzi.snapshot(
+        hud(HudView.State(connection = "연결됨", connected = true, listening = true, level = 900.0,
+            lines = MEETING, battery = 82, mode = Mode.LECTURE.title)),
+        "15_lecture_mode",
+    )
+
     @Test fun aiThinking() = paparazzi.snapshot(
         hud(HudView.State(connection = "연결됨", connected = true, listening = true, level = 900.0, lines = MEETING, assistBusy = true, battery = 64, charging = true)),
         "07_ai_thinking",

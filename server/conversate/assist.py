@@ -443,6 +443,7 @@ class AssistEngine:
         self.converter = converter
         self.converted: deque[str] = deque(maxlen=10)
         self.config = config or AssistConfig()
+        self.default_config = self.config
         self.clock = clock
         self.lines: deque[str] = deque(maxlen=self.config.context_lines)
         self.shown: deque[str] = deque(maxlen=self.config.remember_titles)
@@ -459,6 +460,9 @@ class AssistEngine:
         self.cooldown_until = -1e9
         # When volunteered information was last shown (rationed by proactive_interval_s).
         self.last_proactive = -1e9
+        # Listening mode (modes.py): a line telling the AI the setting, and kinds not to show.
+        self.situation = ""
+        self.blocked_kinds: frozenset = frozenset()
 
     def on_final(self, text: str) -> None:
         text = text.strip()
@@ -503,6 +507,8 @@ class AssistEngine:
         new = set(new_list)
         self.new_lines = []
         transcript = [f"[새] {line}" if line in new else line for line in self.lines]
+        if self.situation:
+            transcript = [f"(상황: {self.situation})"] + transcript
         busy = False
         topic = None
         pick = None
@@ -576,6 +582,9 @@ class AssistEngine:
     def _vet(self, pick: "Pick | None", new_lines: list[str]) -> "Pick | None":
         """Checks on what triage picked, before anything shows on screen."""
         if pick is None:
+            return None
+        if pick.kind in self.blocked_kinds:
+            log.info("assist: %s picks are off in this mode (%s)", pick.kind, pick.topic)
             return None
         if pick.kind == "conversion" and pick.quote and any(_norm(s) in _norm(pick.quote) for s in self.converted):
             log.info("assist: conversion %r already shown instantly, skipped", pick.topic)

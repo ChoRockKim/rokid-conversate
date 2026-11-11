@@ -68,7 +68,14 @@ class HudView(context: Context) : View(context) {
         val charging: Boolean = false,
         /** Wi-Fi not connected yet: the app's own card (instead of the bright system screen). */
         val wifi: WifiCard? = null,
+        /** Main menu (listening mode) at launch: shown instead of captions while not null. */
+        val menu: Menu? = null,
+        /** Current listening mode's name, top right before "듣는 중". */
+        val mode: String? = null,
     )
+
+    data class MenuItem(val title: String, val description: String)
+    data class Menu(val items: List<MenuItem>, val selected: Int)
 
     data class WifiCard(val title: String, val body: String)
 
@@ -177,6 +184,9 @@ class HudView(context: Context) : View(context) {
     private val imageRect = RectF()
     private val assistBusy = paint(12f, dim)
     private val wifiBody = paint(12f, dim)
+    private val menuTitle = paint(14f, green, bold = true)
+    private val menuDesc = paint(12f, dim)
+    private val menuBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val modalFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
     private val modalBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -217,11 +227,17 @@ class HudView(context: Context) : View(context) {
         }
         drawMic(canvas, s)
 
-        drawAnimatedAssist(canvas, s)
+        if (s.menu != null) {
+            drawMenu(canvas, s.menu)
+        } else {
+            drawAnimatedAssist(canvas, s)
+        }
         s.wifi?.let { drawWifi(canvas, it) }
 
         // Captions, bottom-up from just above the hint line.
-        if (s.lines.isEmpty()) {
+        if (s.menu != null) {
+            // The menu takes the caption area.
+        } else if (s.lines.isEmpty()) {
             drawBlock(canvas, s.notice, noticePaint, CAPTION_BOTTOM)
         } else {
             var bottom = CAPTION_BOTTOM
@@ -273,6 +289,7 @@ class HudView(context: Context) : View(context) {
     }
 
     private fun drawMic(canvas: Canvas, s: State) {
+        if (s.menu != null) return  // nothing is recorded on the menu
         var x = W - MARGIN
         if (s.listening) {
             // Five rising bars, filled up to the level.
@@ -288,7 +305,8 @@ class HudView(context: Context) : View(context) {
             }
             x -= 6f
         }
-        val label = if (s.listening) "듣는 중" else "정지됨"
+        val state = if (s.listening) "듣는 중" else "정지됨"
+        val label = if (s.mode != null && s.menu == null) "${s.mode} · $state" else state
         small.color = if (s.listening) green else dim
         canvas.drawText(label, x - small.measureText(label), TOP_BASELINE, small)
     }
@@ -434,6 +452,35 @@ class HudView(context: Context) : View(context) {
         if (busy) postInvalidateDelayed(400)
     }
 
+    /**
+     * Main menu: one row card per mode, the selected one bright with a green border, the others
+     * dim. Same look as the AI card (black, thin border), so it does not light up the view.
+     */
+    private fun drawMenu(canvas: Canvas, menu: Menu) {
+        val left = (W - MODAL_WIDTH) / 2
+        val right = left + MODAL_WIDTH
+        canvas.drawText("모드 선택", left, MENU_TOP - 8f, small.apply { color = dim })
+        var top = MENU_TOP
+        for ((i, item) in menu.items.withIndex()) {
+            val selected = i == menu.selected
+            modalRect.set(left, top, right, top + MENU_ROW_H)
+            canvas.drawRoundRect(modalRect, MODAL_RADIUS, MODAL_RADIUS, modalFill)
+            menuBorder.color = if (selected) green else Color.parseColor("#1f4a2e")
+            menuBorder.strokeWidth = if (selected) 1.5f else 1f
+            canvas.drawRoundRect(modalRect, MODAL_RADIUS, MODAL_RADIUS, menuBorder)
+            menuTitle.color = if (selected) green else dim
+            val baseline = top + MENU_ROW_H / 2 + 5f
+            canvas.drawText(item.title, left + MODAL_PAD, baseline, menuTitle)
+            menuDesc.color = if (selected) Color.WHITE else dim
+            val x = left + MODAL_PAD + 96f
+            val desc = TextUtils.ellipsize(item.description, menuDesc, right - MODAL_PAD - x, TextUtils.TruncateAt.END)
+            canvas.drawText(desc, 0, desc.length, x, baseline, menuDesc)
+            top += MENU_ROW_H + MENU_GAP
+        }
+        val hint = "쓸기: 고르기 · 탭: 시작 · 두 번 탭: 종료"
+        canvas.drawText(hint, left, top + 12f, tiny)
+    }
+
     /** Wi-Fi card in the middle of the caption area, same look as the AI card, dim text. */
     private fun drawWifi(canvas: Canvas, card: WifiCard) {
         val left = (W - MODAL_WIDTH) / 2
@@ -489,6 +536,9 @@ class HudView(context: Context) : View(context) {
         /** AI card picture, outside the card at the right: AI-area tall, at most this wide. */
         const val IMAGE_MAX_W = 120f
         const val IMAGE_GAP = 8f
+        const val MENU_TOP = 64f
+        const val MENU_ROW_H = 40f
+        const val MENU_GAP = 8f
         const val MODAL_PAD = 8f
         const val MODAL_RADIUS = 6f
         const val CAPTION_BOTTOM = H - 30f
