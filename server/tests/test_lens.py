@@ -93,7 +93,7 @@ def test_gemini_call_uses_only_the_standard_library(monkeypatch):
     r = client(lens.gemini_from_env()).post("/lens/translate?target=ko", content=JPEG)
     assert r.status_code == 200, r.text
     assert r.json()["paragraphs"] == [{"source": "Exit", "translated": "출구", "from": "en"}]
-    assert "gemini-2.5-flash-lite:generateContent?key=k" in sent["url"]
+    assert "gemini-3.5-flash-lite:generateContent?key=k" in sent["url"]
     assert sent["body"]["contents"][0]["parts"][0]["inline_data"]["mime_type"] == "image/jpeg"
 
 

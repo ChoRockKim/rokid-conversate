@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 MAX_PHOTO = 4 * 1024 * 1024
 PER_IP_PER_MINUTE = 20
 PER_DAY = 1000
-DEFAULT_MODEL = "gemini-2.5-flash-lite"
+DEFAULT_MODEL = "gemini-3.5-flash-lite"
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 LANG_NAMES = {"ko": "Korean", "en": "English", "ja": "Japanese", "zh": "Chinese"}
