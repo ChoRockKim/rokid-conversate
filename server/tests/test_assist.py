@@ -294,10 +294,10 @@ def test_new_lines_are_marked_and_repeats_are_dropped():
         eng = AssistEngine(Same(), send, AssistConfig(min_line_chars=1, min_interval_s=0, min_new_chars=1))
         eng.on_final("방탄소년단이 언제 데뷔했더라")
         await asyncio.sleep(0.05)
-        eng.on_final("아 그렇구나")
+        eng.on_final("그 노래 지금 들어도 좋아")
         await asyncio.sleep(0.05)
         assert seen_transcripts[0] == ["[새] 방탄소년단이 언제 데뷔했더라"]
-        assert seen_transcripts[1] == ["방탄소년단이 언제 데뷔했더라", "[새] 아 그렇구나"]
+        assert seen_transcripts[1] == ["방탄소년단이 언제 데뷔했더라", "[새] 그 노래 지금 들어도 좋아"]
         assert sent == ["방탄소년단 데뷔"]  # the same topic again is not shown twice
 
     run(main())
@@ -554,5 +554,35 @@ def test_long_answers_when_korean_captions_are_off():
         eng.on_final("뢰스티가 뭐야?")
         await asyncio.sleep(0.05)
         assert asked and asked[0].endswith(LONG_ANSWER_HINT)
+
+    asyncio.run(main())
+
+
+def test_backchannel_lines_do_not_trigger_the_ai():
+    from conversate.assist import is_backchannel
+
+    for t in ["응", "아 진짜?", "그치 그치", "맞아요.", "헐 대박", "Yeah, right."]:
+        assert is_backchannel(t), t
+    for t in ["그래서 그 가게 어디야?", "진짜 맛있었어", "그럼 내일 몇 시에 봐?"]:
+        assert not is_backchannel(t), t
+
+    async def main():
+        asked = []
+
+        class A:
+            def triage(self, transcript, shown):
+                asked.append(transcript)
+                return None
+
+        async def send(a):
+            pass
+
+        eng = AssistEngine(A(), send, AssistConfig(min_line_chars=1, min_interval_s=0, min_new_chars=1))
+        eng.on_final("아 진짜?")
+        await asyncio.sleep(0.05)
+        assert asked == []
+        eng.on_final("그 가게 이름이 뭐였지?")
+        await asyncio.sleep(0.05)
+        assert asked and "아 진짜?" in asked[0]  # still there as context
 
     asyncio.run(main())

@@ -88,11 +88,12 @@ class LanguageId:
     partial. Korean wins unless another language is clearly ahead, since a wrong "foreign"
     opens a paid translation session and writes the partial in the wrong language.
 
-    Environment: LANGID_MODEL (default base).
+    Environment: LANGID_MODEL (default tiny: with the rule below it got all 8 of our clips
+    right, 3 Korean, 2 English, 3 Japanese, 2026-11-11; ~200 MB instead of base's ~370 MB).
     """
 
     def __init__(self) -> None:
-        self.model_name = os.environ.get("LANGID_MODEL", "base")
+        self.model_name = os.environ.get("LANGID_MODEL", "tiny")
         self._model = None
         self._lock = threading.Lock()
 

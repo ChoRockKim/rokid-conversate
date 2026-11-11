@@ -118,6 +118,24 @@ _QUESTION = re.compile(
 )
 
 
+# Words that only keep a conversation going. A line made only of these is not worth asking the
+# AI about ("아 진짜?" also looked like a question and was triaged at once).
+_BACKCHANNEL = {
+    "응", "어", "아", "네", "예", "음", "흠", "오", "와", "헐", "웅", "엥", "아하", "오오", "우와", "와우",
+    "그치", "그쵸", "그죠", "맞아", "맞아요", "맞네", "맞지", "그래", "그래요", "그래서", "그렇구나", "그렇지",
+    "그렇네", "그러니까", "그니까", "그러게", "그러게요", "진짜", "진짜로", "정말", "정말로", "대박", "좋아",
+    "좋아요", "좋네", "좋다", "오케이", "알겠어", "알겠어요", "알았어", "그럼", "당연하지", "ㅇㅇ", "ㅋㅋ",
+    "ok", "okay", "yeah", "yes", "yep", "right", "wow", "really", "uh", "huh", "mm", "hmm", "oh", "sure",
+}
+
+
+def is_backchannel(text: str) -> bool:
+    words = [w for w in re.split(r"[\s,.!?~…·]+", text.lower()) if w]
+    if not words or len(_norm(text)) > 15:
+        return False
+    return all(w in _BACKCHANNEL or w.rstrip("요") in _BACKCHANNEL for w in words)
+
+
 def looks_like_question(text: str) -> bool:
     return bool(_QUESTION.search(text))
 
@@ -498,8 +516,8 @@ class AssistEngine:
         if not text:
             return
         self.lines.append(text)
-        if len(_norm(text)) < self.config.min_line_chars:
-            return  # context only
+        if len(_norm(text)) < self.config.min_line_chars or is_backchannel(text):
+            return  # context only: nothing to look up in "응", "아 진짜?" (cost: no triage call)
         self.new_lines.append(text)
         self.new_chars += len(text)
         if self.converter is not None:
