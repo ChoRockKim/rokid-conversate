@@ -19,6 +19,8 @@ enum class Mode(
     val gateRatio: Double,
     val gateOpenChunks: Int,
     val gateHangoverChunks: Int,
+    /** Absolute floor of the gate (RMS); the media channel is clean, so it can be low. */
+    val gateMinRms: Double = SpeechGate.MIN_RMS,
 ) {
     DAILY(
         "daily", "일상", "나와 상대의 대화",
@@ -34,10 +36,13 @@ enum class Mode(
         // The speakers' own signal: no room noise, so anything above the floor is sound; it
         // keeps going (songs, videos), so a long hangover keeps lines from being cut.
         input = MicStreamer.Input.PLAYBACK, gateRatio = 1.5, gateOpenChunks = 1, gateHangoverChunks = 30,
+        // After the automatic gain (MicStreamer.nextGain): quiet media still opens it.
+        gateMinRms = 20.0,
     );
 
     fun gate() = SpeechGate(
         hangoverChunks = gateHangoverChunks, openRatio = gateRatio, openChunks = gateOpenChunks,
+        minRms = gateMinRms,
     )
 
     companion object {

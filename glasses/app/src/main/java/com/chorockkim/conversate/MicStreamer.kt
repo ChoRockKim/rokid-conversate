@@ -128,6 +128,7 @@ class MicStreamer(
             val buffer = ByteArray(chunkBytes)
             val levelSums = DoubleArray(source.channels)
             var levelChunks = 0
+            var playbackGain = 1.0
             var reports = 0
             var altChunks = 0
             var useAlt = false
@@ -150,8 +151,12 @@ class MicStreamer(
                     channelRms(buffer, source.channels).forEachIndexed { i, r -> levelSums[i] += r * r }
                     val primary = mix(buffer, source.channels, source.mixChannels, source.gain)
                     val picked = when {
-                        input == Input.PLAYBACK && source.channels == 8 ->
-                            mix(buffer, source.channels, PLAYBACK_CHANNELS, PLAYBACK_GAIN)
+                        input == Input.PLAYBACK && source.channels == 8 -> {
+                            // Quiet media came in at RMS 13-40 (2026-11-11): automatic gain.
+                            val raw = mix(buffer, source.channels, PLAYBACK_CHANNELS, 1.0)
+                            playbackGain = nextGain(playbackGain, rms(raw))
+                            mix(buffer, source.channels, PLAYBACK_CHANNELS, playbackGain)
+                        }
                         source.altChannels.isEmpty() -> primary
                         else -> {
                             val alt = mix(buffer, source.channels, source.altChannels, source.altGain)
@@ -224,7 +229,22 @@ class MicStreamer(
          * without room noise. From community reverse engineering; not checked on the glasses.
          */
         val PLAYBACK_CHANNELS = listOf(6, 7)
-        const val PLAYBACK_GAIN = 1.0
+        /** Automatic gain for the playback channels: aim for this RMS, at most [PLAYBACK_MAX_GAIN]x. */
+        const val PLAYBACK_TARGET_RMS = 1500.0
+        const val PLAYBACK_MAX_GAIN = 40.0
+        /** Below this RMS it is silence (between tracks, paused): the gain is left as it is. */
+        const val PLAYBACK_SILENCE_RMS = 3.0
+
+        /**
+         * One chunk's step of the automatic gain: toward [PLAYBACK_TARGET_RMS], down fast (no
+         * clipping on a loud start) and up slowly (no pumping on short dips), unchanged on silence.
+         */
+        fun nextGain(gain: Double, rawRms: Double): Double {
+            if (rawRms < PLAYBACK_SILENCE_RMS) return gain
+            val want = (PLAYBACK_TARGET_RMS / rawRms).coerceIn(1.0, PLAYBACK_MAX_GAIN)
+            val rate = if (want < gain) 0.5 else 0.1
+            return gain + (want - gain) * rate
+        }
 
         /** Rokid's 8-channel layout (0,1 processed · 2..5 raw capsules · 6,7 echo reference). */
         const val ROKID_8CH_MASK = 0x6000FC

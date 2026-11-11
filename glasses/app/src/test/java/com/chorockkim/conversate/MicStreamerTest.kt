@@ -1,6 +1,7 @@
 package com.chorockkim.conversate
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MicStreamerTest {
@@ -69,5 +70,16 @@ class MicStreamerTest {
         // near-ties keep the current side
         assertEquals(true, MicStreamer.pickAlt(primaryRms = 110.0, altRms = 100.0, wasAlt = true))
         assertEquals(false, MicStreamer.pickAlt(primaryRms = 100.0, altRms = 110.0, wasAlt = false))
+    }
+
+    @Test fun playbackGainBringsQuietMediaUpAndLeavesSilenceAlone() {
+        var gain = 1.0
+        repeat(60) { gain = MicStreamer.nextGain(gain, 30.0) }   // quiet media, 6 s
+        assertEquals(40.0, gain, 2.0)                             // capped
+        val held = gain
+        repeat(30) { gain = MicStreamer.nextGain(gain, 1.0) }     // paused: unchanged
+        assertEquals(held, gain, 0.0)
+        repeat(5) { gain = MicStreamer.nextGain(gain, 1500.0) }   // loud: down fast
+        assertTrue("gain $gain", gain < 3.0)
     }
 }

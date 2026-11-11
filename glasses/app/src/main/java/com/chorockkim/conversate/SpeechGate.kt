@@ -17,6 +17,7 @@ class SpeechGate(
     private val hangoverChunks: Int = HANGOVER_CHUNKS,
     private val openRatio: Double = OPEN_RATIO,
     private val openChunks: Int = OPEN_CHUNKS,
+    private val minRms: Double = MIN_RMS,
 ) {
     private val preRoll = ArrayDeque<ByteArray>()
     private var floor = -1.0
@@ -32,7 +33,7 @@ class SpeechGate(
             rms < floor -> floor * 0.8 + rms * 0.2
             else -> floor * 0.995 + rms * 0.005
         }
-        val loud = rms >= maxOf(MIN_RMS, floor * openRatio)
+        val loud = rms >= maxOf(minRms, floor * openRatio)
         loudRun = if (loud) loudRun + 1 else 0
         val wasOpen = open
         // Opening needs a run of loud chunks; once open, any loud chunk keeps it open.
