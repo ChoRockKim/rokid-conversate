@@ -17,6 +17,7 @@ rokid-conversate 를 만들면서 알게 된 것 중, 다른 Rokid 안경 앱에
 | 안경 앱이 서버에 WebSocket(`wss://…/ws`, Bearer 토큰)으로 직접 붙고, 소리는 16 kHz 모노 PCM 바이너리로, 결과는 JSON 텍스트로 주고받으면 충분하다. | 실기 |
 | 서버 주소와 토큰은 빌드할 때 APK 에 넣는다(`BuildConfig`). 안경에 키보드가 없기 때문이다. 바꿀 때는 `am start … --es config 'CONVERSATE:url=…;token=…'` 로 넣고 앱이 저장해 둔다. | 서버 (adb 명령은 미확인) |
 | **iPhone 핫스팟은 연결된 기기가 없으면 잠든다.** 안경이 못 붙으면 iPhone 에서 설정 → 개인용 핫스팟 화면을 한 번 연다. | 문서 |
+| **Hi Rokid 앱은 안경에 폰 인터넷을 통째로 나눠 주지 않는다.** 안드로이드 Hi Rokid 1.16.15 를 열어 본 결과: VPN·테더링 권한이 없고, 대신 `ProxyGatewayService`(연결 기기용 포그라운드 서비스)와 안경 미니앱 엔진(`libink_android_api.so`, `com.rokid.jsui.ink`)의 `ink_networking::routing`(`ipc` / `default-transport`) 이 있다. 즉 Rokid 앱의 요청만 블루투스로 폰 앱에 넘겨 폰이 대신 통신하는 **앱 단위 중계**로 보인다. 이 길은 폰에 Hi Rokid(또는 CXR-M) 가 떠 있어야 하고 iPhone 쪽 구현은 우리가 쓸 수 없다. 코드 본체는 NetEase 보호로 암호화돼 있어 풀지 않았다(매니페스트·네이티브 라이브러리 문자열만 봄). | 문서 (2026-11-11) |
 | 애플의 인스턴트 핫스팟(꺼진 핫스팟을 Wi-Fi 목록에서 골라 켜기)은 애플 기기끼리만 된다. 대신 **iPhone 단축어 자동화**: 단축어 → 자동화 → 블루투스 → Rokid 안경 "연결될 때" → 즉시 실행 → 동작 "개인용 핫스팟 켜기". 안경이 블루투스로 붙으면 핫스팟이 켜지고, 앱이 Wi-Fi 를 켜면 저장된 핫스팟에 자동으로 붙는다. 손대지 않고 연결된다. | 실기 (2026-11-11) |
 
 ## 2. 화면
