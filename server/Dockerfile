@@ -20,5 +20,9 @@ RUN python -c "from faster_whisper import WhisperModel; WhisperModel('base', dev
 
 COPY conversate ./conversate
 
+# Railway: App Sleeping is on (service setting). With no traffic for 10 minutes the server
+# sleeps and memory is not billed (it was ~2 GB around the clock, 87% of the bill); the next
+# request wakes it (a cold start of ~10-20 s, the models below are baked in). The glasses
+# close their connection after 3 minutes of silence, so it can fall asleep.
 # Railway sets PORT.
 CMD ["sh", "-c", "uvicorn conversate.main:app --factory --host 0.0.0.0 --port ${PORT:-8000} --ws-ping-interval 30 --ws-ping-timeout 30"]
