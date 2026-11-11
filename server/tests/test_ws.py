@@ -550,3 +550,57 @@ def test_korean_captions_off_sends_only_foreign_speech():
         texts = [m["text"] for m in seen if m["type"] == "caption"]
         assert "어제 산 운동화 이야기" not in texts and "부분" not in texts
         assert "Where is the station?" in texts
+
+
+def test_opening_live_translation_keeps_the_session_settings():
+    """_start_live used to reset korean_captions, the Opus decoder and more (stray lines)."""
+    import asyncio
+
+    class Live:
+        def __init__(self, on_korean):
+            pass
+
+        async def start(self):
+            pass
+
+        async def feed(self, pcm):
+            pass
+
+        async def stop(self):
+            pass
+
+    async def main():
+        s = _session()
+        s.live_factory = Live
+        s.korean_captions = False
+        s.opus = "decoder"
+        await s._start_live()
+        assert s.live is not None
+        assert s.korean_captions is False and s.opus == "decoder"
+
+    asyncio.run(main())
+
+
+def test_live_translation_opened_on_a_korean_partial_closes_at_its_final():
+    import asyncio
+    import numpy as np
+    from conversate.segmenter import Event
+
+    stopped = []
+
+    class Live:
+        async def stop(self):
+            stopped.append(True)
+
+    async def main():
+        s = _session()
+        s.live = Live()
+        s.live_opened_by, s.live_confirmed = 4, False
+        await s._deliver(Event("final", np.zeros(1600, dtype=np.float32), 4), "어제 산 운동화 이야기", final=True)
+        assert stopped and s.live is None
+        # A confirmed session (a foreign final came) stays open on Korean finals.
+        s.live, s.live_opened_by, s.live_confirmed = Live(), 5, True
+        await s._deliver(Event("final", np.zeros(1600, dtype=np.float32), 6), "응 맞아", final=True)
+        assert s.live is not None
+
+    asyncio.run(main())

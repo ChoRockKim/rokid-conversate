@@ -567,8 +567,13 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         )
         // Battery: nothing on screen while listening -> darkest the window allows. Whether
         // the Rokid display honours window brightness is not checked yet.
-        val idle = mode != null && captionsHidden && (assist == null || assistHidden) && !assistBusy &&
-            wifiStatus.let { it == null || it == WifiEnabler.Status.CONNECTED } && message == null && notice.isEmpty()
+        val aiShown = (assist != null && !assistHidden) || assistBusy
+        val needsReading = wifiStatus.let { it != null && it != WifiEnabler.Status.CONNECTED } ||
+            message != null || notice.isNotEmpty()
+        val idle = mode != null && !aiShown && !needsReading &&
+            // Korean captions off: lowest brightness unless an AI card is up (translations
+            // included); on: only while nothing at all is shown.
+            (!settings.koreanCaptions || captionsHidden)
         if (idle != dimmed) {
             dimmed = idle
             window.attributes = window.attributes.apply {

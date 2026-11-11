@@ -109,8 +109,12 @@ class LanguageId:
         with self._lock:
             language, prob, all_probs = model.detect_language(normalize(audio))
         ko = dict(all_probs or []).get("ko", 0.0)
-        if language != "ko" and prob >= 0.5 and ko < 0.1:
+        # Stricter since Korean partials kept opening live translation (2026-11-11).
+        if language != "ko" and prob >= 0.7 and ko < 0.05:
+            log.info("language id: %s %.2f (ko %.2f)", language, prob, ko)
             return language
+        if language != "ko":
+            log.info("language id: %s %.2f but ko %.2f -> ko", language, prob, ko)
         return "ko"
 
 

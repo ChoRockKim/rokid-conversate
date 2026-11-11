@@ -199,6 +199,10 @@ class Session:
         self.recent_total = 0                    # bytes ever added (to find what came later)
         self.partial_language: dict[int, str | None] = {}
         self.live_starting = False
+        # Live translation opened on a first partial's language guess: by which utterance, and
+        # whether a foreign final has confirmed it since.
+        self.live_opened_by: int | None = None
+        self.live_confirmed = False
         self.want_levels = False
         # Off: Korean speech is still transcribed (for the AI and the history) but not sent to
         # the glasses; only foreign speech and its translation are (battery: the screen stays
@@ -476,6 +480,9 @@ class Session:
                     for old in [k for k in self.partial_language if k < seg - 5]:
                         del self.partial_language[old]
                     if language != "ko" and self.live is None and self.live_factory is not None:
+                        # Not confirmed until a final of it comes back foreign (see _deliver).
+                        self.live_opened_by = seg
+                        self.live_confirmed = False
                         asyncio.create_task(self._start_live(replay_s=len(event.audio) / SAMPLE_RATE + 0.5))
                 if language == "ko" and not self.korean_captions:
                     return None  # Korean partials are not shown: not transcribed either
@@ -539,6 +546,7 @@ class Session:
         if foreign:
             self.final_text[seg] = text
             await self._send_caption(seg, text, True, self._live_text_for(seg, text))
+            self.live_confirmed = True
             if self.live is not None:
                 self.live_until = time.monotonic() + LIVE_IDLE_S
             if self.translator is not None:
@@ -551,6 +559,12 @@ class Session:
                 # A partial of it is on screen (it looked foreign): take it down.
                 await self._send_caption(seg, "", True, None)
             self.live_texts.pop(seg, None)  # Korean speech: the translator's version is not wanted
+            if (self.live is not None or self.live_starting) and not self.live_confirmed \
+                    and self.live_opened_by is not None and seg >= self.live_opened_by:
+                # Opened on a first partial that only looked foreign; it was Korean.
+                log.info("live translation: #%d was Korean after all, closing", seg)
+                self.live_opened_by = None
+                await self._stop_live()
         if text and self.assist is not None and self.mode.assist:
             self.assist.on_final(text)
 
@@ -604,7 +618,8 @@ class Session:
         return korean
 
     async def _on_live_korean(self, piece: str, elapsed_ms: float | None = None) -> None:
-        self.live_until = time.monotonic() + LIVE_IDLE_S
+        # The idle timer is not pushed back here: Korean speech also comes out of the
+        # translator (as Korean), which kept a mistakenly opened session open for minutes.
         seg = self._live_seg_for(elapsed_ms)
         so_far = self.live_texts.get(seg, "")
         self.live_texts[seg] = so_far + (piece if so_far else piece.lstrip())
@@ -635,13 +650,6 @@ class Session:
             await self._open_live(replay_s)
         finally:
             self.live_starting = False
-        self.want_levels = False
-        # Off: Korean speech is still transcribed (for the AI and the history) but not sent to
-        # the glasses; only foreign speech and its translation are (battery: the screen stays
-        # empty and dark).
-        self.korean_captions = True
-        self.sent_partials: set[int] = set()
-        self.opus: OpusDecoder | None = None
 
     async def _open_live(self, replay_s: float) -> None:
         started = time.monotonic()
