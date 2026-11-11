@@ -72,6 +72,8 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     /** null = the main menu is showing (nothing is recorded). */
     private var mode: Mode? = null
     private var menuIndex = 0
+    /** Which menu page shows while [mode] is null: the main menu or settings. */
+    private var inSettings = false
     private lateinit var wifiEnabler: WifiEnabler
     private var wifiStatus: WifiEnabler.Status? = null
     private var wifiDetail: String? = null
@@ -173,6 +175,7 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         menuIndex = settings.lastMode.ordinal
         // Opus is off: on the glasses (0.1.26-0.1.27) the server decoded it into loud noise and
         // no captions came. PCM until the encoder output is understood (OPUS_ENABLED).
+        client.koreanCaptions = settings.koreanCaptions
         encoder = if (OPUS_ENABLED) OpusEncoder.create() else null
         client.format = if (encoder != null) "opus" else "pcm_s16le"
         main.postDelayed(idleCheck, IDLE_CHECK_MS)
@@ -259,6 +262,7 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
     private fun showMenu() {
         stopListening()
         mode = null
+        inSettings = false
         menuIndex = settings.lastMode.ordinal
         render()
     }
@@ -345,13 +349,29 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         if (action == GlassesInput.Action.SELECT && wifiStatus == WifiEnabler.Status.CANNOT_ENABLE) {
             return wifiEnabler.openSystemSettings()
         }
-        if (mode == null) {
-            // Main menu.
-            val modes = Mode.entries
+        if (mode == null && inSettings) {
+            // Settings page: one toggle for now; tap switches it, back returns to the menu.
             when (action) {
-                GlassesInput.Action.PREVIOUS -> menuIndex = (menuIndex - 1 + modes.size) % modes.size
-                GlassesInput.Action.NEXT -> menuIndex = (menuIndex + 1) % modes.size
-                GlassesInput.Action.SELECT -> return startMode(modes[menuIndex])
+                GlassesInput.Action.SELECT -> {
+                    val on = !settings.koreanCaptions
+                    settings.koreanCaptions = on
+                    client.koreanCaptions = on
+                    client.sendText(Protocol.settings(on))
+                }
+                GlassesInput.Action.BACK -> { inSettings = false; menuIndex = Mode.entries.size }
+                else -> return
+            }
+            return render()
+        }
+        if (mode == null) {
+            // Main menu: the modes, then "설정".
+            val count = Mode.entries.size + 1
+            when (action) {
+                GlassesInput.Action.PREVIOUS -> menuIndex = (menuIndex - 1 + count) % count
+                GlassesInput.Action.NEXT -> menuIndex = (menuIndex + 1) % count
+                GlassesInput.Action.SELECT ->
+                    if (menuIndex < Mode.entries.size) return startMode(Mode.entries[menuIndex])
+                    else inSettings = true
                 GlassesInput.Action.BACK -> return finish()
                 else -> return
             }
@@ -512,10 +532,12 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
             assistBusy = assistBusy && connected,
             message = message,
             wifi = wifiCard(wifiStatus),
-            menu = if (mode == null) HudView.Menu(
-                Mode.entries.map { HudView.MenuItem(it.title, it.description) }, menuIndex,
-            ) else null,
-            mode = mode?.title,
+            menu = when {
+                mode != null -> null
+                inSettings -> settingsMenu(settings.koreanCaptions)
+                else -> mainMenu(menuIndex)
+            },
+            mode = mode?.let { if (settings.koreanCaptions) it.title else "${it.title} · 번역만" },
             drain = when {
                 mode == null || charging || battery == null -> null
                 else -> drainPerHour?.let { "−%.0f%%/h".format(it) } ?: "소모 측정 중"
@@ -538,6 +560,24 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
 
     private companion object {
         const val TAG = "Conversate"
+
+        fun mainMenu(selected: Int) = HudView.Menu(
+            Mode.entries.map { HudView.MenuItem(it.title, it.description) } +
+                HudView.MenuItem("설정", "한국어 자막 켬/끔"),
+            selected,
+        )
+
+        fun settingsMenu(koreanCaptions: Boolean) = HudView.Menu(
+            listOf(
+                HudView.MenuItem(
+                    "한국어 자막 ${if (koreanCaptions) "켬" else "끔"}",
+                    if (koreanCaptions) "모든 말을 자막으로" else "외국어 번역만 표시, AI는 계속 들음",
+                ),
+            ),
+            selected = 0,
+            title = "설정",
+            hint = "탭: 바꾸기 · 두 번 탭: 메뉴로",
+        )
         const val REQ_MIC = 1
         const val CAPTION_HIDE_MS = 10_000L
         const val ASSIST_HIDE_MS = 10_000L

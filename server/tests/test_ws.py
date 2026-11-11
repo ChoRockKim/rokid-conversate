@@ -519,3 +519,34 @@ def test_hallucinated_outro_lines_are_dropped_but_real_talk_is_kept():
         assert is_noise_text(made_up), made_up
     for real in ["감사합니다", "오늘 구독료 얘기 좀 하자", "유튜브 구독자가 많네", "이 영상 좋아요 많이 받았네"]:
         assert not is_noise_text(real), real
+
+
+def test_korean_captions_off_sends_only_foreign_speech():
+    """Setting on the glasses: Korean speech is still transcribed (AI, history) but not sent;
+    foreign speech and its translation are."""
+
+    class Mixed:
+        def __init__(self):
+            self.n = 0
+
+        def transcribe(self, audio, *, partial):
+            if partial:
+                return "부분"
+            self.n += 1
+            return "어제 산 운동화 이야기" if self.n == 1 else "Where is the station?"
+
+    class Tr:
+        def translate(self, text):
+            return "역이 어디예요?"
+
+    with client(stt=Mixed(), translator=Tr()).websocket_connect("/ws", headers=AUTH) as ws:
+        ws.send_text(json.dumps({"type": "hello", "korean_captions": False}))
+        assert json.loads(ws.receive_text())["type"] == "ready"
+        for _ in range(2):
+            ws.send_bytes(silence(500) + tone(1000) + silence(1000))
+            ws.send_text(json.dumps({"type": "stop"}))
+        seen = []
+        read_until(ws, lambda m: seen.append(m) or (m["type"] == "caption" and m.get("translation") == "역이 어디예요?"))
+        texts = [m["text"] for m in seen if m["type"] == "caption"]
+        assert "어제 산 운동화 이야기" not in texts and "부분" not in texts
+        assert "Where is the station?" in texts

@@ -34,6 +34,9 @@ class ConversateClient(
     /** Audio format announced in hello: "opus" when the glasses can encode it, else PCM. */
     @Volatile var format: String = "pcm_s16le"
 
+    /** Korean captions setting sent with every hello. */
+    @Volatile var koreanCaptions: Boolean = true
+
     interface Listener {
         fun onState(state: State, detail: String)
         fun onMessage(message: Protocol.ServerMessage)
@@ -121,7 +124,7 @@ class ConversateClient(
             if (!current()) return webSocket.cancel()
             synchronized(lock) { attempt = 0 }
             setState(State.CONNECTED, "")
-            webSocket.send(Protocol.hello(mode, format))
+            webSocket.send(Protocol.hello(mode, format, koreanCaptions))
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {

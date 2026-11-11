@@ -200,6 +200,11 @@ class Session:
         self.partial_language: dict[int, str | None] = {}
         self.live_starting = False
         self.want_levels = False
+        # Off: Korean speech is still transcribed (for the AI and the history) but not sent to
+        # the glasses; only foreign speech and its translation are (battery: the screen stays
+        # empty and dark).
+        self.korean_captions = True
+        self.sent_partials: set[int] = set()
         self.opus: OpusDecoder | None = None
         self.assist = (
             AssistEngine(ai, self._send_assist, on_busy=self._send_assist_busy, converter=converter)
@@ -368,8 +373,14 @@ class Session:
             self.opus = OpusDecoder() if audio_format == "opus" else None
             log.info("audio format: %s", audio_format)
             self.want_levels = bool(msg.get("levels"))
+            self.korean_captions = msg.get("korean_captions", True) is not False
             self._apply_mode(msg.get("mode"))
             await self.send({"type": "ready"})
+        elif kind == "settings":
+            # From the glasses' settings menu (also sent again in every hello).
+            if "korean_captions" in msg:
+                self.korean_captions = msg["korean_captions"] is not False
+                log.info("korean captions: %s", "on" if self.korean_captions else "off")
         elif kind == "mode":
             # Picked on the glasses' menu (also sent again in every hello).
             self._apply_mode(msg.get("mode"))
@@ -466,7 +477,11 @@ class Session:
                         del self.partial_language[old]
                     if language != "ko" and self.live is None and self.live_factory is not None:
                         asyncio.create_task(self._start_live(replay_s=len(event.audio) / SAMPLE_RATE + 0.5))
+                if language == "ko" and not self.korean_captions:
+                    return None  # Korean partials are not shown: not transcribed either
                 text = await asyncio.to_thread(self.stt.partial_in, event.audio, language)
+            elif partial and not self.korean_captions:
+                return None  # no language detection: cannot tell foreign partials apart
             else:
                 text = await asyncio.to_thread(self.stt.transcribe, event.audio, partial=partial)
         except Exception as exc:  # keep the session alive if one call fails
@@ -511,6 +526,8 @@ class Session:
             # Kept even before live translation is up: it opens in the background, and its
             # first pieces attach to this caption at once.
             self.partial_text[seg] = text
+            if not self.korean_captions and not foreign:
+                return
             if self.live is not None:
                 await self._send_caption(seg, text, False, self._live_text_for(seg, text))
             elif text:
@@ -528,12 +545,20 @@ class Session:
                 asyncio.create_task(self._translate(seg, text))
             await self._start_live()
         else:
-            await self._send_caption(seg, text, True, None)
+            if self.korean_captions:
+                await self._send_caption(seg, text, True, None)
+            elif seg in self.sent_partials:
+                # A partial of it is on screen (it looked foreign): take it down.
+                await self._send_caption(seg, "", True, None)
             self.live_texts.pop(seg, None)  # Korean speech: the translator's version is not wanted
         if text and self.assist is not None and self.mode.assist:
             self.assist.on_final(text)
 
     async def _send_caption(self, seg: int, text: str, final: bool, translation: str | None) -> None:
+        if not final:
+            self.sent_partials.add(seg)
+            for old in [k for k in self.sent_partials if k < seg - 20]:
+                self.sent_partials.discard(old)
         message = {"type": "caption", "id": seg, "text": text, "final": final}
         if translation:
             message["translation"] = translation
@@ -611,6 +636,11 @@ class Session:
         finally:
             self.live_starting = False
         self.want_levels = False
+        # Off: Korean speech is still transcribed (for the AI and the history) but not sent to
+        # the glasses; only foreign speech and its translation are (battery: the screen stays
+        # empty and dark).
+        self.korean_captions = True
+        self.sent_partials: set[int] = set()
         self.opus: OpusDecoder | None = None
 
     async def _open_live(self, replay_s: float) -> None:

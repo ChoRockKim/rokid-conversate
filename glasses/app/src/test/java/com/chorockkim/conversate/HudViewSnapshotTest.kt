@@ -94,8 +94,20 @@ class HudViewSnapshotTest {
 
     @Test fun mainMenu() = paparazzi.snapshot(
         hud(HudView.State(connection = "연결됨", connected = true, battery = 82,
-            menu = HudView.Menu(Mode.entries.map { HudView.MenuItem(it.title, it.description) }, selected = 1))),
+            menu = HudView.Menu(
+                Mode.entries.map { HudView.MenuItem(it.title, it.description) } + HudView.MenuItem("설정", "한국어 자막 켬/끔"),
+                selected = 1,
+            ))),
         "14_main_menu",
+    )
+
+    @Test fun settingsPage() = paparazzi.snapshot(
+        hud(HudView.State(connection = "연결됨", connected = true, battery = 82,
+            menu = HudView.Menu(
+                listOf(HudView.MenuItem("한국어 자막 끔", "외국어 번역만 표시, AI는 계속 들음")),
+                selected = 0, title = "설정", hint = "탭: 바꾸기 · 두 번 탭: 메뉴로",
+            ))),
+        "16_settings",
     )
 
     @Test fun listeningInLectureMode() = paparazzi.snapshot(

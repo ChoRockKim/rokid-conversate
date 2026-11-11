@@ -77,7 +77,12 @@ class HudView(context: Context) : View(context) {
     )
 
     data class MenuItem(val title: String, val description: String)
-    data class Menu(val items: List<MenuItem>, val selected: Int)
+    data class Menu(
+        val items: List<MenuItem>,
+        val selected: Int,
+        val title: String = "모드 선택",
+        val hint: String = "쓸기: 고르기 · 탭: 시작 · 두 번 탭: 종료",
+    )
 
     data class WifiCard(val title: String, val body: String)
 
@@ -466,7 +471,7 @@ class HudView(context: Context) : View(context) {
     private fun drawMenu(canvas: Canvas, menu: Menu) {
         val left = (W - MODAL_WIDTH) / 2
         val right = left + MODAL_WIDTH
-        canvas.drawText("모드 선택", left, MENU_TOP - 8f, small.apply { color = dim })
+        canvas.drawText(menu.title, left, MENU_TOP - 8f, small.apply { color = dim })
         var top = MENU_TOP
         for ((i, item) in menu.items.withIndex()) {
             val selected = i == menu.selected
@@ -479,13 +484,12 @@ class HudView(context: Context) : View(context) {
             val baseline = top + MENU_ROW_H / 2 + 5f
             canvas.drawText(item.title, left + MODAL_PAD, baseline, menuTitle)
             menuDesc.color = if (selected) Color.WHITE else dim
-            val x = left + MODAL_PAD + 96f
+            val x = left + MODAL_PAD + maxOf(96f, menuTitle.measureText(item.title) + 14f)
             val desc = TextUtils.ellipsize(item.description, menuDesc, right - MODAL_PAD - x, TextUtils.TruncateAt.END)
             canvas.drawText(desc, 0, desc.length, x, baseline, menuDesc)
             top += MENU_ROW_H + MENU_GAP
         }
-        val hint = "쓸기: 고르기 · 탭: 시작 · 두 번 탭: 종료"
-        canvas.drawText(hint, left, top + 12f, tiny)
+        canvas.drawText(menu.hint, left, top + 12f, tiny)
     }
 
     /** Wi-Fi card in the middle of the caption area, same look as the AI card, dim text. */
@@ -544,8 +548,8 @@ class HudView(context: Context) : View(context) {
         const val IMAGE_MAX_W = 120f
         const val IMAGE_GAP = 8f
         const val MENU_TOP = 64f
-        const val MENU_ROW_H = 40f
-        const val MENU_GAP = 8f
+        const val MENU_ROW_H = 34f
+        const val MENU_GAP = 6f
         const val MODAL_PAD = 8f
         const val MODAL_RADIUS = 6f
         const val CAPTION_BOTTOM = H - 30f
