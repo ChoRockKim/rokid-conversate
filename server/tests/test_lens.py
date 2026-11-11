@@ -94,7 +94,7 @@ def test_gemini_call_uses_only_the_standard_library(monkeypatch):
     r = client(lens.gemini_from_env()).post("/lens/translate?target=ko", content=JPEG)
     assert r.status_code == 200, r.text
     assert r.json()["paragraphs"] == [{"source": "Exit", "translated": "출구", "from": "en"}]
-    assert "gemini-3.5-flash-lite:generateContent?key=k" in sent["url"]
+    assert "gemini-3.5-flash:generateContent?key=k" in sent["url"]
     assert sent["body"]["contents"][0]["parts"][0]["inline_data"]["mime_type"] == "image/jpeg"
 
 
@@ -106,3 +106,39 @@ def test_gemini_errors_become_502_or_429(monkeypatch):
     assert client(lens.gemini_from_env()).post("/lens/translate", content=JPEG).status_code == 429
     monkeypatch.setattr(lens, "post_json", lambda url, body, timeout=30: (500, "boom"))
     assert client(lens.gemini_from_env()).post("/lens/translate", content=JPEG).status_code == 502
+
+
+def test_falls_back_to_the_lighter_model(monkeypatch):
+    import conversate.lens as lens
+
+    calls = []
+
+    def fake_post(url, body, timeout=30):
+        calls.append(url.split("/models/")[1].split(":")[0])
+        if "flash-lite" not in url:
+            return 404, "no such model"
+        answer = {"paragraphs": [{"source": "Exit", "translated": "출구", "from": "en"}]}
+        return 200, json.dumps({"candidates": [{"content": {"parts": [{"text": json.dumps(answer)}]}}]})
+
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.delenv("GEMINI_MODELS", raising=False)
+    monkeypatch.setattr(lens, "post_json", fake_post)
+    r = client(lens.gemini_from_env()).post("/lens/translate", content=JPEG)
+    assert r.status_code == 200
+    assert r.json()["model"] == "gemini-3.5-flash-lite"
+    assert calls == ["gemini-3.5-flash", "gemini-3.5-flash-lite"]
+
+
+def test_last_photo_only_with_the_upload_token():
+    async def fake(jpeg, target):
+        return {"model": "fake", "paragraphs": []}
+
+    app = FastAPI()
+    app.include_router(lens_router(fake, upload_token="up"))
+    c = TestClient(app)
+    assert c.get("/lens/last", headers={"Authorization": "Bearer up"}).status_code == 404
+    c.post("/lens/translate", content=JPEG)
+    assert c.get("/lens/last").status_code == 401
+    assert c.get("/lens/last", headers={"Authorization": "Bearer nope"}).status_code == 401
+    r = c.get("/lens/last", headers={"Authorization": "Bearer up"})
+    assert r.status_code == 200 and r.content == JPEG

@@ -24,14 +24,15 @@ import urllib.request
 from collections import defaultdict, deque
 from typing import Awaitable, Callable
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 
 log = logging.getLogger(__name__)
 
 MAX_PHOTO = 4 * 1024 * 1024
 PER_IP_PER_MINUTE = 20
 PER_DAY = 1000
-DEFAULT_MODEL = "gemini-3.5-flash-lite"
+# Tried in order: the better model first, the lighter one when it is missing or out of quota.
+DEFAULT_MODELS = "gemini-3.5-flash,gemini-3.5-flash-lite"
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 LANG_NAMES = {"ko": "Korean", "en": "English", "ja": "Japanese", "zh": "Chinese"}
@@ -80,7 +81,7 @@ def gemini_from_env() -> Gemini | None:
     key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not key:
         return None
-    model = os.environ.get("GEMINI_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
+    models = [m.strip() for m in (os.environ.get("GEMINI_MODELS") or DEFAULT_MODELS).split(",") if m.strip()]
 
     async def call(jpeg: bytes, target: str) -> dict:
         body = {
@@ -97,11 +98,18 @@ def gemini_from_env() -> Gemini | None:
             },
         }
         # Standard library only (the deployed image has no extra HTTP client); runs in a thread.
-        status, text = await asyncio.to_thread(post_json, GEMINI_URL.format(model=model) + "?key=" + key, body)
+        status, text, model = 0, "", models[0]
+        for model in models:
+            status, text = await asyncio.to_thread(post_json, GEMINI_URL.format(model=model) + "?key=" + key, body)
+            if status == 200:
+                break
+            log.warning("gemini %s %s: %s", model, status, text[:300])
+            # Missing model, quota or a server error: try the next one.
+            if status not in (404, 429, 500, 503):
+                break
         if status == 429:
             raise HTTPException(429, "AI quota reached")
         if status != 200:
-            log.warning("gemini %s: %s", status, text[:300])
             raise HTTPException(502, f"AI error {status}")
         try:
             answer = json.loads(text)["candidates"][0]["content"]["parts"][0]["text"]
@@ -175,9 +183,21 @@ def client_ip(request: Request) -> str:
     return forwarded.split(",")[0].strip() or (request.client.host if request.client else "?")
 
 
-def lens_router(gemini: Gemini | None, limits: Limits | None = None) -> APIRouter:
+def lens_router(gemini: Gemini | None, limits: Limits | None = None, upload_token: str = "") -> APIRouter:
     router = APIRouter()
     lim = limits or Limits()
+    # For diagnosing recognition: only the last photo, only in memory, only with the upload token.
+    last: dict[str, bytes] = {}
+
+    @router.get("/lens/last")
+    def last_photo(request: Request) -> Response:
+        from .ota import bearer, check
+
+        if not check(bearer(request), upload_token):
+            raise HTTPException(401, "unauthorized")
+        if "jpeg" not in last:
+            raise HTTPException(404, "no photo yet")
+        return Response(last["jpeg"], media_type="image/jpeg")
 
     @router.post("/lens/translate")
     async def translate(request: Request, target: str = "ko") -> dict:
@@ -192,8 +212,9 @@ def lens_router(gemini: Gemini | None, limits: Limits | None = None) -> APIRoute
             raise HTTPException(400, "not a JPEG")
         if not lim.allow(client_ip(request)):
             raise HTTPException(429, "too many photos")
+        last["jpeg"] = body
         result = await gemini(body, target)
-        log.info("lens: %d paragraphs (%d bytes)", len(result.get("paragraphs", [])), len(body))
+        log.info("lens: %s, %d paragraphs (%d bytes)", result.get("model"), len(result.get("paragraphs", [])), len(body))
         return result
 
     return router
@@ -203,4 +224,4 @@ def lens_router_from_env() -> APIRouter:
     gemini = gemini_from_env()
     if gemini is None:
         log.info("GEMINI_API_KEY not set: /lens/translate is closed")
-    return lens_router(gemini)
+    return lens_router(gemini, upload_token=os.environ.get("OTA_UPLOAD_TOKEN", ""))
