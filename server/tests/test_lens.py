@@ -76,3 +76,32 @@ def test_parse_keeps_only_complete_paragraphs():
 def test_prompt_asks_for_korean_and_english_for_korean_text():
     p = prompt("ko")
     assert "into natural Korean" in p and "into English instead" in p
+
+
+def test_gemini_call_uses_only_the_standard_library(monkeypatch):
+    import conversate.lens as lens
+
+    sent = {}
+
+    def fake_post(url, body, timeout=30):
+        sent["url"], sent["body"] = url, body
+        answer = {"paragraphs": [{"source": "Exit", "translated": "출구", "from": "en"}]}
+        return 200, json.dumps({"candidates": [{"content": {"parts": [{"text": json.dumps(answer)}]}}]})
+
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setattr(lens, "post_json", fake_post)
+    r = client(lens.gemini_from_env()).post("/lens/translate?target=ko", content=JPEG)
+    assert r.status_code == 200, r.text
+    assert r.json()["paragraphs"] == [{"source": "Exit", "translated": "출구", "from": "en"}]
+    assert "gemini-2.5-flash-lite:generateContent?key=k" in sent["url"]
+    assert sent["body"]["contents"][0]["parts"][0]["inline_data"]["mime_type"] == "image/jpeg"
+
+
+def test_gemini_errors_become_502_or_429(monkeypatch):
+    import conversate.lens as lens
+
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setattr(lens, "post_json", lambda url, body, timeout=30: (429, "quota"))
+    assert client(lens.gemini_from_env()).post("/lens/translate", content=JPEG).status_code == 429
+    monkeypatch.setattr(lens, "post_json", lambda url, body, timeout=30: (500, "boom"))
+    assert client(lens.gemini_from_env()).post("/lens/translate", content=JPEG).status_code == 502

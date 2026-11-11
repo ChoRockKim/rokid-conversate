@@ -13,11 +13,14 @@ The Lens APK carries no server token, so the free Gemini quota is protected by l
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
 import os
 import time
+import urllib.error
+import urllib.request
 from collections import defaultdict, deque
 from typing import Awaitable, Callable
 
@@ -76,8 +79,6 @@ def gemini_from_env() -> Gemini | None:
     model = os.environ.get("GEMINI_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
 
     async def call(jpeg: bytes, target: str) -> dict:
-        import httpx  # comes with the openai package
-
         body = {
             "contents": [{
                 "parts": [
@@ -91,25 +92,33 @@ def gemini_from_env() -> Gemini | None:
                 "temperature": 0.2,
             },
         }
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                r = await client.post(GEMINI_URL.format(model=model), params={"key": key}, json=body)
-        except httpx.HTTPError as e:
-            log.warning("gemini: %s", type(e).__name__)
-            raise HTTPException(502, "AI unreachable")
-        if r.status_code == 429:
+        # Standard library only (the deployed image has no extra HTTP client); runs in a thread.
+        status, text = await asyncio.to_thread(post_json, GEMINI_URL.format(model=model) + "?key=" + key, body)
+        if status == 429:
             raise HTTPException(429, "AI quota reached")
-        if r.status_code != 200:
-            log.warning("gemini %s: %s", r.status_code, r.text[:300])
-            raise HTTPException(502, f"AI error {r.status_code}")
-        data = r.json()
+        if status != 200:
+            log.warning("gemini %s: %s", status, text[:300])
+            raise HTTPException(502, f"AI error {status}")
         try:
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
-        except (KeyError, IndexError, TypeError):
+            answer = json.loads(text)["candidates"][0]["content"]["parts"][0]["text"]
+        except (ValueError, KeyError, IndexError, TypeError):
             return {"model": model, "paragraphs": []}
-        return {"model": model, **parse(text)}
+        return {"model": model, **parse(answer)}
 
     return call
+
+
+def post_json(url: str, body: dict, timeout: float = 30) -> tuple[int, str]:
+    """POST JSON with urllib; returns (status, text). Network failures become HTTP 502."""
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, r.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode("utf-8", "replace")
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        log.warning("gemini: %s", type(e).__name__)
+        raise HTTPException(502, "AI unreachable")
 
 
 def parse(text: str) -> dict:
