@@ -121,6 +121,7 @@ scripts/release.sh 2 0.2.0 --upload   # versionCode 는 매번 올린다
 - 위의 `-i` 설치나 `appops` 가 빠졌으면 안드로이드가 설치 확인 창을 띄운다 (그때는 한 번 눌러야 함).
 - 서버 쪽: `PUT /app/upload` (업로드 토큰), `GET /app/latest`·`/app/download` (안경 토큰). APK 는 Railway 볼륨 `/data/ota` 에 하나만 보관.
 - 다른 안경 앱도 같은 서버로 업데이트한다: `/apps/<이름>/latest`·`/download` (토큰 없이 공개, 서버 토큰이 든 APK 는 올리지 말 것), `PUT /apps/<이름>/upload` (같은 업로드 토큰). 이름은 `OTA_PUBLIC_APPS` (기본 `rokid-youtube`), 파일은 `/data/ota/<이름>/`.
+- **rokid-lens 사진 번역:** `POST /lens/translate?target=ko` (본문 JPEG) → Gemini가 글자를 읽고 번역해 문단 목록으로 돌려준다. 변수 `GEMINI_API_KEY` (없으면 503), 선택 `GEMINI_MODEL` (기본 `gemini-2.5-flash-lite`). Lens APK 에는 토큰이 없어서 무료 한도 보호용으로 주소당 분당 20장, 하루 전체 1000장으로 제한한다.
 - **릴리스 키를 잃어버리면 OTA 로는 더 이상 업데이트할 수 없다** (지우고 케이블로 다시 설치).
 - 실기 미확인: Rokid 펌웨어가 확인 창 없는 설치와 업데이트 뒤 자동 실행을 허용하는지.
 

@@ -37,6 +37,7 @@ from .convert import find as find_conversions
 from .history import ConversationLog, history_from_env, history_router
 from .notes import notes_router, notes_store_from_env
 from .ota import ota_router_from_env
+from .lens import lens_router_from_env
 from .segmenter import SAMPLE_RATE, Event, Segmenter, SegmenterConfig
 from .transcriber import Transcriber, transcriber_from_env
 from .translate import Translator, needs_translation, translator_from_env
@@ -97,6 +98,7 @@ def create_app(
     token: str | None = None,
     assistant: Assistant | None | object = _FROM_ENV,
     ota: APIRouter | None = None,
+    lens: APIRouter | None = None,
     segmenter_config: SegmenterConfig | None = None,
     translator: Translator | None | object = _FROM_ENV,
     live_factory: Callable[..., LiveTranslator] | None | object = _FROM_ENV,
@@ -133,6 +135,8 @@ def create_app(
             threading.Thread(target=local.language_id._get_model, daemon=True, name="langid-preload").start()
     expected = token if token is not None else os.environ.get("CONVERSATE_TOKEN", "")
     app.include_router(ota or ota_router_from_env(expected))
+    # Photo translation for the rokid-lens glasses app (Gemini; closed without GEMINI_API_KEY).
+    app.include_router(lens or lens_router_from_env())
     app.include_router(notes_router(notes, expected))
     if hist is not None:
         app.include_router(history_router(hist, expected))
