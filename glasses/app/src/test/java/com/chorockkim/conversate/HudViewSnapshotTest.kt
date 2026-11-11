@@ -116,6 +116,26 @@ class HudViewSnapshotTest {
         "17_ai_history",
     )
 
+    @Test fun tallAiCardWithTranslationBelow() = paparazzi.snapshot(
+        hud(HudView.State(connection = "연결됨", connected = true, listening = true, battery = 82, mode = "일상 · 번역만",
+            tallAssist = true,
+            assist = HudView.Assist(
+                "뢰스티",
+                "뢰스티는 채 썬 감자를 둥글고 납작하게 부쳐 겉은 바삭하고 속은 부드럽게 익힌 스위스 요리이다. " +
+                    "원래 베른 지역 농부들의 아침 식사였고, 지금은 독일어권 스위스를 대표하는 음식으로 꼽힌다. " +
+                    "치즈나 베이컨, 달걀을 올려 먹기도 한다.",
+                counter = "3/3",
+            ),
+            lines = listOf(
+                Line(10, "Have you tried rösti? It's a Swiss potato dish.", true, isOriginal = true),
+                Line(10, "뢰스티 먹어 봤어요? 스위스 감자 요리예요.", true, isTranslation = true),
+                Line(11, "I had it with an egg on top.", false, isOriginal = true),
+                Line(11, "저는 달걀을 올려서 먹었어요.", false, isTranslation = true),
+            ),
+        )),
+        "18_tall_ai_card",
+    )
+
     @Test fun listeningInLectureMode() = paparazzi.snapshot(
         hud(HudView.State(connection = "연결됨", connected = true, listening = true,
             lines = MEETING, battery = 82, mode = Mode.LECTURE.title, drain = "−6%/h")),

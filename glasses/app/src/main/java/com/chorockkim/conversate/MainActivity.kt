@@ -557,6 +557,7 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
                 else -> mainMenu(menuIndex)
             },
             mode = mode?.let { if (settings.koreanCaptions) it.title else "${it.title} · 번역만" },
+            tallAssist = mode != null && !settings.koreanCaptions,
             drain = when {
                 mode == null || charging || battery == null -> null
                 else -> drainPerHour?.let { "−%.0f%%/h".format(it) } ?: "소모 측정 중"

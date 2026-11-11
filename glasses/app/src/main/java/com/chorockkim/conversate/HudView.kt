@@ -68,6 +68,11 @@ class HudView(context: Context) : View(context) {
         val wifi: WifiCard? = null,
         /** Main menu (listening mode) at launch: shown instead of captions while not null. */
         val menu: Menu? = null,
+        /**
+         * Korean captions off: the AI card may grow down to [TALL_ASSIST_BOTTOM] (answers are
+         * longer then), and the translation captions keep to the space below it.
+         */
+        val tallAssist: Boolean = false,
         /** Current listening mode's name, top right before "듣는 중". */
         val mode: String? = null,
         /** Battery drain since the mode started ("−6%/h"), left of the battery. */
@@ -239,7 +244,8 @@ class HudView(context: Context) : View(context) {
         }
         s.wifi?.let { drawWifi(canvas, it) }
 
-        // Captions, bottom-up from just above the hint line.
+        // Captions, bottom-up from just above the hint line, never above the AI card's area.
+        val captionTop = if (s.tallAssist) TALL_ASSIST_BOTTOM + 8f else CAPTION_TOP
         if (s.menu != null) {
             // The menu takes the caption area.
         } else if (s.lines.isEmpty()) {
@@ -255,10 +261,10 @@ class HudView(context: Context) : View(context) {
                     else -> older
                 }
                 val layout = layoutOf(line.text, paint)
-                if (bottom - layout.height < CAPTION_TOP) {
+                if (bottom - layout.height < captionTop) {
                     // Oldest visible line: keep its last rows, cut the top.
                     canvas.save()
-                    canvas.clipRect(0f, CAPTION_TOP, W, bottom)
+                    canvas.clipRect(0f, captionTop, W, bottom)
                     canvas.translate(MARGIN, bottom - layout.height)
                     layout.draw(canvas)
                     canvas.restore()
@@ -317,8 +323,9 @@ class HudView(context: Context) : View(context) {
         val eased = alpha * alpha * (3 - 2 * alpha) // smoothstep
         canvas.save()
         canvas.translate(0f, (1f - eased) * -CARD_SLIDE)
-        val layer = canvas.saveLayerAlpha(0f, 0f, W, ASSIST_BOTTOM + 8f, (eased * 255).toInt())
-        if (visible) drawAssist(canvas, s.assist, s.assistBusy) else drawAssist(canvas, fadingAssist, false)
+        val cardBottom = if (s.tallAssist) TALL_ASSIST_BOTTOM else ASSIST_BOTTOM
+        val layer = canvas.saveLayerAlpha(0f, 0f, W, cardBottom + 8f, (eased * 255).toInt())
+        if (visible) drawAssist(canvas, s.assist, s.assistBusy, cardBottom) else drawAssist(canvas, fadingAssist, false, cardBottom)
         canvas.restoreToCount(layer)
         canvas.restore()
         if (progress < 1f) postInvalidateOnAnimation()
@@ -376,7 +383,7 @@ class HudView(context: Context) : View(context) {
      * AI result; while a request is running, "생각 중" with moving dots (in the title row, or as
      * a small card on its own when there is no result yet).
      */
-    private fun drawAssist(canvas: Canvas, assist: Assist?, busy: Boolean) {
+    private fun drawAssist(canvas: Canvas, assist: Assist?, busy: Boolean, cardBottom: Float = ASSIST_BOTTOM) {
         if (assist == null && !busy) return
         var left = (W - MODAL_WIDTH) / 2
         var right = left + MODAL_WIDTH
@@ -415,14 +422,14 @@ class HudView(context: Context) : View(context) {
             right = W - MARGIN - imageW - IMAGE_GAP
         }
         val textW = right - left - 2 * MODAL_PAD
-        val maxBodyLines = ((ASSIST_BOTTOM - ASSIST_TOP - 2 * MODAL_PAD - titleH) / 16f).toInt().coerceAtLeast(1)
+        val maxBodyLines = ((cardBottom - ASSIST_TOP - 2 * MODAL_PAD - titleH) / 16f).toInt().coerceAtLeast(1)
         val body = StaticLayout.Builder.obtain(assist.text, 0, assist.text.length, assistBody, textW.toInt())
             .setLineSpacing(0f, 1.1f)
             .setMaxLines(maxBodyLines)
             .setEllipsize(TextUtils.TruncateAt.END)
             .build()
         val content = titleH + body.height
-        val bottom = (ASSIST_TOP + 2 * MODAL_PAD + content).coerceAtMost(ASSIST_BOTTOM)
+        val bottom = (ASSIST_TOP + 2 * MODAL_PAD + content).coerceAtMost(cardBottom)
         modalRect.set(left, ASSIST_TOP, right, bottom)
         canvas.drawRoundRect(modalRect, MODAL_RADIUS, MODAL_RADIUS, modalFill)
         canvas.drawRoundRect(modalRect, MODAL_RADIUS, MODAL_RADIUS, modalBorder)
@@ -527,6 +534,8 @@ class HudView(context: Context) : View(context) {
         const val ASSIST_TOP = 36f
         const val ASSIST_BOTTOM = ASSIST_TOP + 84f
         const val CAPTION_TOP = ASSIST_BOTTOM + 8f
+        /** Taller AI card with Korean captions off (about 8 body lines); captions keep below. */
+        const val TALL_ASSIST_BOTTOM = ASSIST_TOP + 150f
         /** AI card fade/slide duration and distance. */
         const val CARD_ANIM_MS = 280L
         const val CARD_SLIDE = 8f

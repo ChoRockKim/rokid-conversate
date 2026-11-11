@@ -394,6 +394,10 @@ def retry_after_seconds(message: str, header: str | None) -> float:
     return 60.0
 
 
+# Added to the question when the glasses show Korean captions off (more room on screen).
+LONG_ANSWER_HINT = "\n(이번 답은 길어도 된다: 한국어 160자 이내, 서너 문장까지. 그래도 핵심부터.)"
+
+
 def parse_reply(text: str) -> Assist | None:
     """Pull the JSON object out of the model's reply. Anything unusable counts as a skip."""
     match = re.search(r"\{.*\}", text or "", re.DOTALL)
@@ -411,7 +415,7 @@ def parse_reply(text: str) -> Assist | None:
         return None
     image = data.get("image")
     image = str(image).strip()[:80] if isinstance(image, str) and image.strip().lower() not in ("", "null", "none") else None
-    return Assist(title[:40], body[:200], image)
+    return Assist(title[:40], body[:320], image)
 
 
 def assistant_from_env(notes: Callable[[], str] | None = None) -> Assistant | None:
@@ -485,6 +489,9 @@ class AssistEngine:
         # Listening mode (modes.py): a line telling the AI the setting, and kinds not to show.
         self.situation = ""
         self.blocked_kinds: frozenset = frozenset()
+        # Korean captions off on the glasses: the card has the screen to itself, so answers
+        # may be longer (the glasses draw a taller card).
+        self.long_answers = False
 
     def on_final(self, text: str) -> None:
         text = text.strip()
@@ -550,11 +557,12 @@ class AssistEngine:
                     result = Assist(SUGGEST_TITLE, note) if note else None
                 else:
                     busy = await self._busy(True)
+                    prompt = pick.prompt + (LONG_ANSWER_HINT if self.long_answers else "")
                     if pick.search is None:
-                        result = await asyncio.to_thread(self.assistant.answer, pick.prompt, transcript)
+                        result = await asyncio.to_thread(self.assistant.answer, prompt, transcript)
                     else:
                         result = await asyncio.to_thread(
-                            self.assistant.answer, pick.prompt, transcript, search=pick.search)
+                            self.assistant.answer, prompt, transcript, search=pick.search)
             else:
                 busy = await self._busy(True)
                 result = await asyncio.to_thread(self.assistant.suggest, transcript, list(self.shown))

@@ -378,12 +378,16 @@ class Session:
             log.info("audio format: %s", audio_format)
             self.want_levels = bool(msg.get("levels"))
             self.korean_captions = msg.get("korean_captions", True) is not False
+            if self.assist is not None:
+                self.assist.long_answers = not self.korean_captions
             self._apply_mode(msg.get("mode"))
             await self.send({"type": "ready"})
         elif kind == "settings":
             # From the glasses' settings menu (also sent again in every hello).
             if "korean_captions" in msg:
                 self.korean_captions = msg["korean_captions"] is not False
+                if self.assist is not None:
+                    self.assist.long_answers = not self.korean_captions
                 log.info("korean captions: %s", "on" if self.korean_captions else "off")
         elif kind == "mode":
             # Picked on the glasses' menu (also sent again in every hello).

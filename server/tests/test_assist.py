@@ -530,3 +530,29 @@ def test_triage_sees_the_last_lines_and_no_reasoning():
             assert a.client.responses.calls == [{"effort": "none"}, {"effort": "low"}, {"effort": "low"}, {"effort": "low"}]
         else:
             assert a.client.responses.calls == [{"effort": "none"}, {"effort": "none"}, {"effort": "low"}]
+
+
+def test_long_answers_when_korean_captions_are_off():
+    from conversate.assist import LONG_ANSWER_HINT, Pick
+
+    async def main():
+        asked = []
+
+        class A:
+            def triage(self, transcript, shown):
+                return Pick("뢰스티란?", kind="question")
+
+            def answer(self, topic, transcript):
+                asked.append(topic)
+                return Assist("뢰스티", "스위스 감자 요리이다.")
+
+        async def send(a):
+            pass
+
+        eng = AssistEngine(A(), send, AssistConfig(min_line_chars=1, min_interval_s=0, min_new_chars=1))
+        eng.long_answers = True
+        eng.on_final("뢰스티가 뭐야?")
+        await asyncio.sleep(0.05)
+        assert asked and asked[0].endswith(LONG_ANSWER_HINT)
+
+    asyncio.run(main())
