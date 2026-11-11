@@ -38,8 +38,16 @@ class OpusDecoder:
         self._av = av
         self._codec = av.CodecContext.create("opus", "r")
         self._resampler = av.AudioResampler(format="s16", layout="mono", rate=16000)
+        self._logged = 0
 
     def decode(self, data: bytes) -> bytes:
+        # The first messages, for checking what an encoder really sends (the glasses' MediaCodec
+        # output decoded into loud noise, 2026-11-11).
+        if self._logged < 3:
+            self._logged += 1
+            packets = split_packets(data)
+            log.info("opus message %d: %d bytes, %d packets %s, head %s", self._logged, len(data),
+                     len(packets), [len(p) for p in packets][:8], data[:24].hex())
         out = []
         for packet in split_packets(data):
             try:

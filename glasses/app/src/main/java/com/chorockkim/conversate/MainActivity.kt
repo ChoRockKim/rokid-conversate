@@ -171,7 +171,9 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         updater.listener = this
         notice = setupNotice()
         menuIndex = settings.lastMode.ordinal
-        encoder = OpusEncoder.create()
+        // Opus is off: on the glasses (0.1.26-0.1.27) the server decoded it into loud noise and
+        // no captions came. PCM until the encoder output is understood (OPUS_ENABLED).
+        encoder = if (OPUS_ENABLED) OpusEncoder.create() else null
         client.format = if (encoder != null) "opus" else "pcm_s16le"
         main.postDelayed(idleCheck, IDLE_CHECK_MS)
         render()
@@ -545,5 +547,6 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         /** About 6 s of audio kept while (re)connecting. */
         const val MAX_PENDING = 60
         const val DIM_BRIGHTNESS = 0.01f
+        const val OPUS_ENABLED = false
     }
 }
