@@ -2,7 +2,9 @@
 
   daily    two people talking (the wearer and someone close): the default.
   lecture  one person at a distance talking at length (a class, a talk, a film).
-  media    sound that keeps going (videos, podcasts, songs).
+  media    what the wearer hears through the glasses' own speakers (Bluetooth from the
+           phone: videos, podcasts, songs). The glasses send the speakers' signal (echo
+           reference channels), not a microphone: clean, and it keeps going.
 
 The glasses pick their microphones and how eagerly they send sound (SpeechGate) per mode;
 the server here picks how utterances are cut (Segmenter) and what the AI card does.
@@ -51,8 +53,8 @@ MODES: dict[str, Mode] = {
     "media": Mode(
         "media", "미디어",
         segmenter=dict(
-            # Music and voices over music: WebRTC VAD at its most lenient, barely above the
-            # background, and lines cut often (songs and podcasts hardly pause).
+            # The speakers' clean signal, music and voices over music: WebRTC VAD at its most
+            # lenient, barely above the floor, and lines cut often (songs hardly pause).
             vad_mode=0, webrtc_min_rms=20.0, webrtc_floor_ratio=1.2,
             end_silence_ms=500, long_after_ms=4_000, long_end_silence_ms=300, max_segment_ms=8_000,
         ),

@@ -147,7 +147,7 @@ class MainActivity : Activity(), ConversateClient.Listener, Updater.Listener {
         mode = picked
         settings.lastMode = picked
         gate = picked.gate()
-        mic.farField = picked.farField
+        mic.input = picked.input
         client.mode = picked.id
         client.sendText(Protocol.mode(picked.id))
         captions.backToLive()

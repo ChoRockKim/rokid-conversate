@@ -39,8 +39,17 @@ class MicStreamer(
     private val onChannelLevels: (name: String, levels: List<Int>, rawShare: Int) -> Unit = { _, _, _ -> },
 ) {
     @Volatile private var running = false
-    /** Raw capsules only (distant voices, see [Mode.farField]); otherwise picked per chunk. */
-    @Volatile var farField = false
+    /** Which channels of the 8-channel source make the mono stream (see [Mode.input]). */
+    @Volatile var input = Input.AUTO
+
+    enum class Input {
+        /** Processed channel or raw capsules, whichever is louder, per chunk. */
+        AUTO,
+        /** Raw capsules only (distant voices: the processed channel wipes them out). */
+        FAR_FIELD,
+        /** The echo reference (6, 7): what the glasses' speakers play, e.g. Bluetooth audio. */
+        PLAYBACK,
+    }
     private var thread: Thread? = null
 
     val isRunning: Boolean get() = running
@@ -119,6 +128,7 @@ class MicStreamer(
             val buffer = ByteArray(chunkBytes)
             val levelSums = DoubleArray(source.channels)
             var levelChunks = 0
+            var reports = 0
             var altChunks = 0
             var useAlt = false
             var chunks = 0
@@ -139,13 +149,21 @@ class MicStreamer(
                 val mono = if (source.channels == 1) buffer.copyOf() else {
                     channelRms(buffer, source.channels).forEachIndexed { i, r -> levelSums[i] += r * r }
                     val primary = mix(buffer, source.channels, source.mixChannels, source.gain)
-                    val picked = if (source.altChannels.isEmpty()) primary else {
-                        val alt = mix(buffer, source.channels, source.altChannels, source.altGain)
-                        useAlt = farField || pickAlt(rms(primary), rms(alt), useAlt)
-                        if (useAlt) alt else primary
+                    val picked = when {
+                        input == Input.PLAYBACK && source.channels == 8 ->
+                            mix(buffer, source.channels, PLAYBACK_CHANNELS, PLAYBACK_GAIN)
+                        source.altChannels.isEmpty() -> primary
+                        else -> {
+                            val alt = mix(buffer, source.channels, source.altChannels, source.altGain)
+                            useAlt = input == Input.FAR_FIELD || pickAlt(rms(primary), rms(alt), useAlt)
+                            if (useAlt) alt else primary
+                        }
                     }
                     if (useAlt) altChunks++
-                    if (++levelChunks >= LEVEL_REPORT_CHUNKS) {
+                    // The first report comes after 5 s (whether e.g. the playback channels carry
+                    // anything shows in the server log), then every LEVEL_REPORT_CHUNKS.
+                    if (++levelChunks >= (if (reports == 0) FIRST_LEVEL_REPORT_CHUNKS else LEVEL_REPORT_CHUNKS)) {
+                        reports++
                         onChannelLevels(
                             source.name, levelSums.map { sqrt(it / levelChunks).roundToInt() },
                             altChunks * 100 / levelChunks,
@@ -199,6 +217,14 @@ class MicStreamer(
         const val SILENT_PROBE_CHUNKS = 15
         /** Per-channel levels every 60 s (diagnostics; was 5 s, battery). */
         const val LEVEL_REPORT_CHUNKS = 600
+        const val FIRST_LEVEL_REPORT_CHUNKS = 50
+        /**
+         * Echo reference channels of [ROKID_8CH_MASK]: the signal sent to the speakers, used by
+         * the glasses' echo cancelling. Media mode captions what plays there (Bluetooth audio)
+         * without room noise. From community reverse engineering; not checked on the glasses.
+         */
+        val PLAYBACK_CHANNELS = listOf(6, 7)
+        const val PLAYBACK_GAIN = 1.0
 
         /** Rokid's 8-channel layout (0,1 processed · 2..5 raw capsules · 6,7 echo reference). */
         const val ROKID_8CH_MASK = 0x6000FC
