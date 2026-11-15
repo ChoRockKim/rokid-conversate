@@ -222,7 +222,7 @@ PAGE = """<!doctype html>
 
   <form id="loginForm" class="hidden">
     <label for="user">아이디 (사용자 이름, 전화번호 또는 이메일)</label>
-    <input id="user" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+    <input id="user" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required>
     <label for="pass">비밀번호</label>
     <input id="pass" type="password" autocomplete="current-password" required>
     <button id="loginBtn">안경으로 보내기</button>
@@ -277,7 +277,7 @@ PAGE = """<!doctype html>
     e.preventDefault();
     $('loginBtn').disabled = true;
     try {
-      await api('/send', { kind: 'credentials', username: $('user').value, password: $('pass').value });
+      await api('/send', { kind: 'credentials', username: $('user').value.trim(), password: $('pass').value });
       $('pass').value = '';
       status(LABEL.logging_in);
       show('loginForm', false);
