@@ -3,7 +3,7 @@
 The glasses have no keyboard and their web pages cannot take the phone keyboard's text, so the
 wearer types a login on the phone instead, like a TV's "go to example.com/device":
 
-  glasses  POST /relay/new                 -> {"code": "482913", "secret": "...", "expiresIn": 600}
+  glasses  POST /relay/new                 -> {"code": "482913", "secret": "...", "expiresIn": 900}
   phone    GET  /login  (or /login/482913)   a small page: enter the code, then ID and password
   phone    POST /api/relay/{code}/send      {"kind": "credentials", "username", "password"}
                                             {"kind": "code", "text"}  (two-step code, when asked)
@@ -11,7 +11,18 @@ wearer types a login on the phone instead, like a TV's "go to example.com/device
   glasses  GET  /relay/poll                 Authorization: Bearer <secret> -> {"messages": [...]}
                                             (each message is handed over once and then dropped)
   glasses  POST /relay/status               Authorization: Bearer <secret>, {"state", "message"}
-                                            states: waiting, logging_in, need_code, done, error
+                                            states: waiting, logging_in, need_code, captcha, done, error
+
+When the site asks for something only a person can do (a captcha, "is this you?"), the glasses
+enter state "captcha" and mirror their hidden login page to the phone, which drives it:
+
+  glasses  POST /relay/screen               Authorization: Bearer <secret>, body = JPEG (latest only)
+  phone    GET  /api/relay/{code}/screen?after=N  -> the JPEG (X-Seq header), or 204 if not newer
+  phone    POST /api/relay/{code}/send      {"kind": "tap", "x", "y"}   (0..1 of the picture)
+                                            {"kind": "scroll", "dy"}    (-1..1 of the picture height)
+                                            {"kind": "type", "text"}    (into the focused field)
+
+The picture is kept in memory only, replaced by the next one and dropped with the session.
 
 Secrets stay in memory only: never logged, never written to disk, dropped once the glasses take
 them, and every session ends after SESSION_TTL seconds (or right after "done"). Codes are 6
@@ -32,13 +43,14 @@ from fastapi.responses import HTMLResponse, Response
 
 log = logging.getLogger(__name__)
 
-SESSION_TTL = 600.0
+SESSION_TTL = 900.0
 MAX_SESSIONS = 50
 MAX_FIELD = 256
 # Wrong codes per phone address before it has to wait MISS_WINDOW seconds.
 MAX_MISSES = 10
 MISS_WINDOW = 600.0
-STATES = {"waiting", "logging_in", "need_code", "done", "error"}
+STATES = {"waiting", "logging_in", "need_code", "captcha", "done", "error"}
+MAX_SCREEN = 400_000
 
 
 @dataclass
@@ -50,6 +62,8 @@ class Session:
     message: str = ""
     messages: list[dict] = field(default_factory=list)
     done_at: float | None = None
+    screen: bytes | None = None
+    screen_seq: int = 0
 
 
 class RelayStore:
@@ -110,6 +124,23 @@ def _bearer(request: Request) -> str:
     return header[7:] if header.lower().startswith("bearer ") else ""
 
 
+def _number(value: object) -> float:
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        raise HTTPException(400, "a number is required")
+    if number != number:  # NaN
+        raise HTTPException(400, "a number is required")
+    return number
+
+
+def _unit(value: object) -> float:
+    number = _number(value)
+    if not 0.0 <= number <= 1.0:
+        raise HTTPException(400, "x and y must be between 0 and 1")
+    return number
+
+
 def _clean(value: object) -> str:
     return str(value or "")[:MAX_FIELD]
 
@@ -144,8 +175,34 @@ def relay_router(store: RelayStore | None = None) -> APIRouter:
             if state == "done":
                 s.done_at = store.clock()
                 s.messages = []
+                s.screen = None
+            elif state != "captcha":
+                s.screen = None
         log.info("relay: glasses state %s", state)
         return {"ok": True}
+
+    @router.post("/relay/screen")
+    async def screen_upload(request: Request) -> dict:
+        s = store.by_secret(_bearer(request))
+        body = await request.body()
+        if not body or len(body) > MAX_SCREEN or not body.startswith(b"\xff\xd8"):
+            raise HTTPException(400, "a JPEG up to 400 kB is required")
+        with store.lock:
+            if s.state != "captcha":
+                raise HTTPException(409, "not mirroring")
+            s.screen = body
+            s.screen_seq += 1
+            seq = s.screen_seq
+        return {"seq": seq}
+
+    @router.get("/api/relay/{code}/screen")
+    def screen_get(code: str, request: Request, after: int = 0) -> Response:
+        s = store.for_phone(code, request.client.host if request.client else "?")
+        with store.lock:
+            picture, seq = s.screen, s.screen_seq
+        if picture is None or seq <= after:
+            return Response(status_code=204, headers={"Cache-Control": "no-store"})
+        return Response(picture, media_type="image/jpeg", headers={"X-Seq": str(seq), "Cache-Control": "no-store"})
 
     @router.post("/api/relay/{code}/send", status_code=204)
     async def send(code: str, request: Request) -> Response:
@@ -157,6 +214,16 @@ def relay_router(store: RelayStore | None = None) -> APIRouter:
             if not username or not password:
                 raise HTTPException(400, "username and password are required")
             message = {"kind": "credentials", "username": username, "password": password}
+        elif kind == "tap":
+            x, y = _unit(body.get("x")), _unit(body.get("y"))
+            message = {"kind": "tap", "x": x, "y": y}
+        elif kind == "scroll":
+            message = {"kind": "scroll", "dy": max(-1.0, min(1.0, _number(body.get("dy"))))}
+        elif kind == "type":
+            text = _clean(body.get("text"))
+            if not text:
+                raise HTTPException(400, "text is required")
+            message = {"kind": "type", "text": text}
         elif kind == "code":
             text = _clean(body.get("text")).strip()
             if not text:
@@ -168,8 +235,9 @@ def relay_router(store: RelayStore | None = None) -> APIRouter:
             if s.state == "done":
                 raise HTTPException(409, "already logged in")
             s.messages.append(message)
-            s.state = "logging_in"
-            s.message = ""
+            if kind in ("credentials", "code"):
+                s.state = "logging_in"
+                s.message = ""
         log.info("relay: phone sent %s", kind)  # never the values
         return Response(status_code=204)
 
@@ -209,6 +277,13 @@ PAGE = """<!doctype html>
   .status { margin-top: 20px; padding: 12px 14px; border-radius: 10px; background: #121a15; border: 1px solid #2c4a37; }
   .hidden { display: none; }
   .note { margin-top: 18px; font-size: 13px; color: #7d9786; }
+  #screenBox p { margin: 16px 0 8px; font-size: 15px; color: #9bb5a4; }
+  #screen { display: block; width: 100%; border-radius: 10px; border: 1px solid #2c4a37; background: #000; touch-action: manipulation; }
+  .row { display: flex; gap: 8px; }
+  .row button, .row input { margin-top: 10px; }
+  .row button { width: auto; flex: 1; padding: 12px; background: #1d3326; color: #e8f5ec; }
+  .row input { flex: 1; min-width: 0; }
+  #typeForm button { flex: 0 0 auto; white-space: nowrap; padding: 12px 18px; }
 </style></head>
 <body><main>
   <h1>안경 로그인</h1>
@@ -234,8 +309,15 @@ PAGE = """<!doctype html>
     <button>안경으로 보내기</button>
   </form>
 
+  <div id="screenBox" class="hidden">
+    <p>안경이 보고 있는 로그인 화면입니다. 그림을 눌러 로봇 확인(캡차)이나 본인 확인을 직접 풀어 주세요. 1초마다 새로 고칩니다.</p>
+    <img id="screen" alt="안경 화면">
+    <div class="row"><button id="up" type="button">▲ 위로</button><button id="down" type="button">▼ 아래로</button></div>
+    <form id="typeForm" class="row"><input id="typeText" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="선택한 칸에 넣을 글자"><button>입력</button></form>
+  </div>
+
   <div id="status" class="status hidden"></div>
-  <p class="note">보낸 정보는 안경이 가져가면 서버에서 바로 지워지고, 10분이 지나면 코드도 사라집니다. 서버는 비밀번호를 저장하거나 기록하지 않습니다.</p>
+  <p class="note">보낸 정보는 안경이 가져가면 서버에서 바로 지워지고, 15분이 지나면 코드도 사라집니다. 서버는 비밀번호를 저장하거나 기록하지 않습니다.</p>
 </main>
 <script>
 (function () {
@@ -253,14 +335,45 @@ PAGE = """<!doctype html>
     }
     return r.status === 204 ? null : r.json();
   }
-  var LABEL = { waiting: '안경이 기다리는 중입니다. 로그인 정보를 보내 주세요.', logging_in: '안경이 로그인하는 중…', need_code: '인증 코드가 필요합니다.', done: '로그인 완료! 안경에서 Threads를 볼 수 있습니다.', error: '로그인하지 못했습니다.' };
+  var LABEL = { waiting: '안경이 기다리는 중입니다. 로그인 정보를 보내 주세요.', logging_in: '안경이 로그인하는 중…', need_code: '인증 코드가 필요합니다.', captcha: '사람 확인이 필요합니다. 아래 안경 화면에서 직접 풀어 주세요.', done: '로그인 완료! 안경에서 볼 수 있습니다.', error: '로그인하지 못했습니다.' };
+  var seq = 0, shotTimer = null, shotUrl = null;
+  async function shot() {
+    try {
+      var r = await fetch('/api/relay/' + code + '/screen?after=' + seq, { cache: 'no-store' });
+      if (r.status !== 200) return;
+      seq = parseInt(r.headers.get('X-Seq') || '0', 10);
+      var url = URL.createObjectURL(await r.blob());
+      $('screen').src = url;
+      if (shotUrl) URL.revokeObjectURL(shotUrl);
+      shotUrl = url;
+    } catch (e) {}
+  }
+  function mirror(on) {
+    show('screenBox', on);
+    if (on && !shotTimer) { shot(); shotTimer = setInterval(shot, 1000); }
+    if (!on && shotTimer) { clearInterval(shotTimer); shotTimer = null; }
+  }
+  async function input(body) { try { await api('/send', body); setTimeout(shot, 600); } catch (e) { status(e.message); } }
+  $('screen').addEventListener('click', function (e) {
+    var r = $('screen').getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    input({ kind: 'tap', x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) });
+  });
+  $('up').addEventListener('click', function () { input({ kind: 'scroll', dy: -0.5 }); });
+  $('down').addEventListener('click', function () { input({ kind: 'scroll', dy: 0.5 }); });
+  $('typeForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var t = $('typeText').value;
+    if (t) { input({ kind: 'type', text: t }); $('typeText').value = ''; }
+  });
   async function poll() {
     try {
       var s = await api('/status');
       status(LABEL[s.state] + (s.message ? ' (' + s.message + ')' : ''));
       show('otpForm', s.state === 'need_code');
       show('loginForm', s.state === 'waiting' || s.state === 'error');
-      if (s.state === 'done') { clearInterval(timer); show('loginForm', false); show('otpForm', false); }
+      mirror(s.state === 'captcha');
+      if (s.state === 'done') { clearInterval(timer); show('loginForm', false); show('otpForm', false); mirror(false); }
     } catch (e) { status(e.message); clearInterval(timer); }
   }
   function start() {

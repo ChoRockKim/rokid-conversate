@@ -106,3 +106,44 @@ def test_values_are_never_logged(caplog):
         c.post(f"/api/relay/{s['code']}/send", json={"kind": "credentials", "username": "someone", "password": "hunter2"})
         c.get("/relay/poll", headers=bearer(s["secret"]))
     assert "hunter2" not in caplog.text and "someone" not in caplog.text and s["secret"] not in caplog.text
+
+
+JPEG = b"\xff\xd8\xff\xe0" + b"0" * 100
+
+
+def test_captcha_mirror_screen_and_inputs():
+    c, store, _ = client()
+    s = c.post("/relay/new").json()
+    code, auth = s["code"], bearer(s["secret"])
+    # Not mirroring yet: the glasses cannot push a picture and the phone gets nothing.
+    assert c.post("/relay/screen", headers=auth, content=JPEG).status_code == 409
+    assert c.get(f"/api/relay/{code}/screen").status_code == 204
+
+    c.post("/relay/status", headers=auth, json={"state": "captcha", "message": "로봇 확인"})
+    assert c.post("/relay/screen", headers=auth, content=b"not a jpeg").status_code == 400
+    assert c.post("/relay/screen", content=JPEG).status_code == 401
+    assert c.post("/relay/screen", headers=auth, content=JPEG).json() == {"seq": 1}
+    r = c.get(f"/api/relay/{code}/screen?after=0")
+    assert r.status_code == 200 and r.content == JPEG and r.headers["X-Seq"] == "1" and r.headers["content-type"] == "image/jpeg"
+    assert c.get(f"/api/relay/{code}/screen?after=1").status_code == 204  # nothing newer
+
+    # Phone inputs are passed on as they are (and do not change the state).
+    assert c.post(f"/api/relay/{code}/send", json={"kind": "tap", "x": 0.25, "y": 1}).status_code == 204
+    assert c.post(f"/api/relay/{code}/send", json={"kind": "scroll", "dy": -5}).status_code == 204
+    assert c.post(f"/api/relay/{code}/send", json={"kind": "type", "text": "ab c"}).status_code == 204
+    assert c.post(f"/api/relay/{code}/send", json={"kind": "tap", "x": 1.5, "y": 0}).status_code == 400
+    assert c.post(f"/api/relay/{code}/send", json={"kind": "tap", "x": "nan", "y": 0}).status_code == 400
+    assert c.get(f"/api/relay/{code}/status").json()["state"] == "captcha"
+    assert c.get("/relay/poll", headers=auth).json()["messages"] == [
+        {"kind": "tap", "x": 0.25, "y": 1.0}, {"kind": "scroll", "dy": -1.0}, {"kind": "type", "text": "ab c"},
+    ]
+
+    # Leaving the mirror (or finishing) drops the picture.
+    c.post("/relay/status", headers=auth, json={"state": "logging_in"})
+    assert c.get(f"/api/relay/{code}/screen").status_code == 204
+
+
+def test_page_shows_the_mirror():
+    c, _, _ = client()
+    html = c.get("/login").text
+    assert 'id="screen"' in html and "kind: 'tap'" in html
